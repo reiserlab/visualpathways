@@ -1,0 +1,8 @@
+# jupytext project config.
+#
+# Pair every .ipynb with a percent-format .py. Runs one-way only: a new
+# .ipynb auto-spawns a .py on first save, but a standalone .py stays as-is
+# (it is not treated as a notebook in Jupyter, so opening it does not create
+# a paired .ipynb).
+formats = "ipynb,py:percent"
+notebook_extensions = "ipynb"

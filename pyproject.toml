@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "malecns-ol-analysis"
+version = "0.1.0"
+
+description = "Analysis of male CNS connectome focusing on vision"
+authors = [{name = "Judith Hoeller", email = "hoellerj@janelia.hhmi.org"}]
+keywords = ["connectomics", "neural network", "vision", "Drosophila", "neuroscience"]
+readme = "README.md"
+license = {file="LICENSE"}
+
+dependencies = [
+    "connectome-interpreter @ git+https://github.com/YijieYin/connectome_interpreter.git@main",
+    # NOTE: deps were unpinned in PR #29; that let `pip install` jump to bleeding-edge
+    # (numpy 2.x / pandas 3.x) and break the env. The ceilings below keep the working
+    # numpy-1.x ABI set. Exact versions are captured in requirements-lock.txt — install
+    # via `pip install -r requirements-lock.txt` for an exactly reproducible env.
+    "numpy<2",          # numpy 2.x breaks pyarrow<16, torch, ncollpyde, pykdtree, ... (compiled for numpy 1.x)
+    "pandas<3",
+    "scipy<1.14",
+    "tqdm",
+    "plotly",
+    "matplotlib<3.11",
+    "networkx",
+    "ipywidgets",
+    "jupytext",
+    "openpyxl",
+    "pyarrow<16",       # pyarrow>=16 requires numpy>=2
+    "kaleido>=1.0",     # 0.2.1 leaked a Chromium per to_image() and was ~30s on 3D mesh
+                        # exports; >=1.0 (works with plotly 6.x) renders those in ~1s
+
+    "igraph",
+    "scikit-learn",
+    "pypdf",
+    "reportlab",
+    # artxz fork adds `omit_rois` support that navis expects; PR #29 had switched
+    # this to stock neuprint-python, which is what broke skeleton/mesh fetch via navis.
+    "neuprint-python @ git+https://github.com/artxz/neuprint-python.git@master",
+    "python-dotenv",
+    # Additional deps used by main's retained code (pre-Judith-clean integration)
+    "alphashape",
+    "cmap",
+    "colormath",
+    "navis @ git+https://github.com/artxz/navis.git@master",
+    "pyvis",
+    "requests",
+    "shapely",
+    "fafbseg",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb"]
+# "prop" is only used by src/rf/find_col_input_malecns.py; keep optional.
+prop_package = ["prop"]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.mypy]
+mypy_path = "src"
+install_types = true
+ignore_missing_imports = true
+follow_untyped_imports = false
+pretty = true
+show_error_context = true
+show_column_numbers = true
+show_error_code_links = true

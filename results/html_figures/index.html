@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interactive HTML Figures</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #18202a;
+      --muted: #647082;
+      --line: #d9dee7;
+      --accent: #0f6b57;
+      --accent-soft: #e4f2ee;
+      --shadow: 0 1px 2px rgb(20 32 48 / 8%);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1400px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .count {
+      color: var(--muted);
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+
+    .groups {
+      display: grid;
+      gap: 16px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 16px;
+      max-height: calc(100vh - 128px);
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    h2 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 0;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    h2 span {
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    ul {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      background: var(--line);
+    }
+
+    li {
+      min-width: 0;
+      background: var(--panel);
+    }
+
+    a {
+      display: block;
+      min-height: 48px;
+      padding: 13px 16px;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92rem;
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+
+    a:hover,
+    a:focus {
+      background: var(--accent-soft);
+      color: var(--accent);
+      outline: none;
+    }
+
+    a.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .viewer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      min-height: calc(100vh - 128px);
+      overflow: hidden;
+    }
+
+    .viewer-header {
+      min-height: 48px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .viewer-title {
+      min-width: 0;
+      margin: 0;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 3.68rem;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    iframe {
+      display: block;
+      width: 50%;
+      height: calc(50vh - 88.5px);
+      min-height: 310px;
+      border: 0;
+      transform: scale(2);
+      transform-origin: top left;
+    }
+
+    @media (max-width: 640px) {
+      main {
+        width: min(100% - 24px, 980px);
+        padding-top: 24px;
+      }
+
+      header {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      h1 {
+        font-size: 1.55rem;
+      }
+
+      .count {
+        white-space: normal;
+      }
+
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+      }
+
+      .viewer,
+      iframe {
+        min-height: 260px;
+      }
+
+      iframe {
+        height: 35vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Interactive HTML Figures</h1>
+      <div class="count" id="panel-count">20 panels</div>
+    </header>
+
+    <div class="layout">
+      <div class="sidebar">
+        <div class="groups" id="figure-groups"></div>
+      </div>
+
+      <section class="viewer" aria-label="Selected panel">
+        <div class="viewer-header">
+          <p class="viewer-title" id="viewer-title"></p>
+        </div>
+        <iframe id="viewer-frame" title="Selected interactive figure"></iframe>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const figures = [
+      "main_1_f_2.html",
+      "main_1_k_2.html",
+      "main_2_b_1.html",
+      "main_2_b_2.html",
+      "main_2_d_1.html",
+      "main_2_d_2.html",
+      "main_2_f.html",
+      "main_2_h_1.html",
+      "main_2_h_2.html",
+      "main_3_d_1.html",
+      "main_3_d_2.html",
+      "main_3_e.html",
+      "main_3_f_1.html",
+      "main_3_f_3.html",
+      "main_3_g_1.html",
+      "main_3_g_2.html",
+      "main_3_g_3.html",
+      "main_3_g_4.html",
+      "main_3_i_1.html",
+      "main_3_i_2.html",
+      "main_4_a_1.html",
+      "main_4_d.html",
+      "main_4_e.html",
+      "main_4_e_2.html",
+      "main_4_f.html",
+      "main_6_b.html",
+      "si_1_e.html",
+      "si_4_a.html",
+      "si_4_b_1.html",
+      "si_4_b_2.html",
+      "si_4_c.html",
+      "si_5_b_1.html",
+      "si_5_l_1.html",
+      "si_7_b_1.html",
+      "si_7_b_2.html",
+      "si_7_d.html",
+      "si_10_a_1.html",
+      "si_10_a_2.html",
+      "si_10_b_1.html",
+      "si_10_b_2.html",
+      "si_10_c.html"
+    ];
+
+    const groups = figures.reduce((acc, file) => {
+      const group = file.match(/^(main|si)_\d+/)?.[0] || "other";
+      (acc[group] ||= []).push(file);
+      return acc;
+    }, {});
+
+    const groupRoot = document.querySelector("#figure-groups");
+    const count = document.querySelector("#panel-count");
+    const frame = document.querySelector("#viewer-frame");
+    const title = document.querySelector("#viewer-title");
+    const linksByFile = new Map();
+
+    function normalizeFrame() {
+      let attempts = 0;
+
+      function tryNormalize() {
+        attempts += 1;
+
+        try {
+          const win = frame.contentWindow;
+          const doc = frame.contentDocument || win?.document;
+
+          if (!doc) {
+            return;
+          }
+
+          let style = doc.querySelector("#viewer-normalize-style");
+          if (!style) {
+            style = doc.createElement("style");
+            style.id = "viewer-normalize-style";
+            style.textContent = `
+              html,
+              body {
+                width: 100% !important;
+                height: 100% !important;
+                margin: 0 !important;
+                overflow: hidden !important;
+              }
+
+              body {
+                display: grid !important;
+                place-items: center !important;
+              }
+
+              body > div:first-child {
+                width: 100% !important;
+                height: 100% !important;
+              }
+
+              .plotly-graph-div,
+              .svg-container {
+                width: 100% !important;
+                height: 100% !important;
+              }
+            `;
+            (doc.head || doc.documentElement).append(style);
+          }
+
+          const graphs = Array.from(doc.querySelectorAll(".plotly-graph-div"));
+          graphs.forEach((graph) => {
+            graph.style.width = "100%";
+            graph.style.height = "100%";
+          });
+
+          if (win?.Plotly && graphs.length > 0) {
+            let resized = false;
+            graphs.forEach((graph) => {
+              if (!graph._fullLayout) {
+                return;
+              }
+
+              win.Plotly.relayout(graph, { autosize: true });
+              win.Plotly.Plots?.resize?.(graph);
+              resized = true;
+            });
+
+            if (resized) {
+              return;
+            }
+          }
+        } catch {
+          return;
+        }
+
+        if (attempts < 20) {
+          setTimeout(tryNormalize, 100);
+        }
+      }
+
+      tryNormalize();
+    }
+
+    function selectPanel(file, updateHash = true) {
+      frame.src = file;
+      title.textContent = file.replace(/\.html$/, "");
+
+      linksByFile.forEach((link, linkFile) => {
+        link.classList.toggle("active", linkFile === file);
+        if (linkFile === file) {
+          link.setAttribute("aria-current", "true");
+        } else {
+          link.removeAttribute("aria-current");
+        }
+      });
+
+      if (updateHash) {
+        history.replaceState(null, "", `#${file.replace(/\.html$/, "")}`);
+      }
+    }
+
+    function render() {
+      groupRoot.replaceChildren();
+      linksByFile.clear();
+
+      let panelCount = 0;
+
+      Object.entries(groups).forEach(([group, files]) => {
+        panelCount += files.length;
+
+        const section = document.createElement("section");
+        const heading = document.createElement("h2");
+        const label = document.createElement("span");
+        const list = document.createElement("ul");
+
+        heading.append(group.replace("_", " "));
+        label.textContent = `${files.length} panel${files.length === 1 ? "" : "s"}`;
+        heading.append(label);
+
+        files.forEach((file) => {
+          const item = document.createElement("li");
+          const link = document.createElement("a");
+          link.href = file;
+          link.textContent = file.replace(/\.html$/, "");
+          link.addEventListener("click", (event) => {
+            event.preventDefault();
+            selectPanel(file);
+          });
+          item.append(link);
+          list.append(item);
+          linksByFile.set(file, link);
+        });
+
+        section.append(heading, list);
+        groupRoot.append(section);
+      });
+
+      count.textContent = `${panelCount} panel${panelCount === 1 ? "" : "s"}`;
+    }
+
+    frame.addEventListener("load", normalizeFrame);
+    window.addEventListener("resize", normalizeFrame);
+
+    render();
+    const hashPanel = decodeURIComponent(location.hash.replace(/^#/, ""));
+    const initialPanel = hashPanel.endsWith(".html") ? hashPanel : `${hashPanel}.html`;
+    selectPanel(figures.includes(initialPanel) ? initialPanel : figures[0], false);
+  </script>
+</body>
+</html>
