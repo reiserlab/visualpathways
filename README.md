@@ -5,5 +5,4 @@ This repository is a collection of code for analyzing the optic lobe in the new 
 
 ## Interactive figures
 
-Interactive HTML figures are available through the [GitHub Pages figure browser]([https://reiserlab.github.io/ol-connectome-analysis/results/html_figures/](https://github.com/reiserlab/visualpathways/blob/main/results/html_figures)).
-
+Interactive HTML figures are available through the [GitHub Pages figure browser](https://reiserlab.github.io/visualpathways/results/html_figures/).
