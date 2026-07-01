@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gallery_vpn</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: arial, sans-serif; display: flex; }
+  nav {
+    width: 180px; flex: 0 0 180px; height: 100vh; display: flex;
+    flex-direction: column; border-right: 1px solid #ccc; background: #fafafa;
+  }
+  .head { padding: 10px 12px 6px; border-bottom: 1px solid #eee; }
+  .head h1 { font-size: 16px; margin: 0 0 8px; color: #333; }
+  #search {
+    width: 100%; padding: 6px 8px; font-size: 14px;
+    border: 1px solid #bbb; border-radius: 4px;
+  }
+  #count { font-size: 12px; color: #777; margin-top: 6px; }
+  ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  li { display: flex; align-items: center; border-bottom: 1px solid #f0f0f0; }
+  li.hidden { display: none; }
+  li a.name {
+    flex: 1; padding: 7px 10px; font-size: 13px; color: #1a5; cursor: pointer;
+    text-decoration: none; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  li a.name:hover { background: #eef7f0; }
+  li.active a.name { background: #d6ecdb; font-weight: 600; color: #084; }
+  li a.ext {
+    padding: 7px 8px; font-size: 13px; color: #aaa; text-decoration: none;
+  }
+  li a.ext:hover { color: #08a; }
+  main { flex: 1; height: 100vh; }
+  #viewer { width: 100%; height: 100%; border: 0; }
+  #placeholder {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: #999; font-size: 15px;
+  }
+</style>
+</head>
+<body>
+<nav>
+  <div class="head">
+    <h1>gallery_vpn</h1>
+    <input id="search" type="text" placeholder="Search instance…"
+           autocomplete="off" autofocus>
+    <div id="count"></div>
+  </div>
+  <ul id="list"></ul>
+</nav>
+<main>
+  <iframe id="viewer" name="viewer" style="display:none"></iframe>
+  <div id="placeholder">Select an instance to view its gallery.</div>
+</main>
+<script>
+const INSTANCES = ["5thsLNv_LNd6_R", "aMe1_R", "aMe3_R", "aMe5_R", "aMe6a_R", "aMe8_R", "aMe9_R", "aMe10_R", "aMe12_R", "aMe13_R", "aMe15_R", "aMe20_R", "aMe23_R", "aMe25_R", "aMe26_R", "AOTU045_R", "CL125_R", "dCal1_R", "H1_R", "H2_R", "HSE_R", "HSN_R", "HSS_R", "HST_R", "l-LNv_R", "LC4_R", "LC6_R", "LC9_R", "LC10a_R", "LC10b_R", "LC10c-1_R", "LC10c-2_R", "LC10d_R", "LC10e_R", "LC11_R", "LC12_R", "LC13_R", "LC14a-1_R", "LC14a-2_R", "LC14b_R", "LC15_R", "LC16_R", "LC17_R", "LC18_R", "LC19_R", "LC20a_R", "LC20b_R", "LC21_R", "LC22_R", "LC23_R", "LC24_R", "LC25_R", "LC26_R", "LC27_R", "LC28_R", "LC29_R", "LC30_R", "LC31a_R", "LC31b_R", "LC33_R", "LC34_R", "LC35a_R", "LC35b_R", "LC36_R", "LC37_R", "LC39a_R", "LC39b_R", "LC40_R", "LC41_R", "LC43_R", "LC44_R", "LC46b_R", "LLPC1_R", "LLPC2_R", "LLPC3_R", "LLPC4_R", "LoVP1_R", "LoVP2_R", "LoVP3_R", "LoVP4_R", "LoVP5_R", "LoVP6_R", "LoVP7_R", "LoVP8_R", "LoVP9_R", "LoVP10_R", "LoVP11_R", "LoVP12_R", "LoVP13_R", "LoVP14_R", "LoVP16_R", "LoVP17_R", "LoVP18_R", "LoVP19_R", "LoVP20_R", "LoVP21_R", "LoVP22_R", "LoVP23_R", "LoVP24_R", "LoVP25_R", "LoVP26_R", "LoVP27_R", "LoVP28_R", "LoVP29_R", "LoVP30_R", "LoVP31_R", "LoVP32_R", "LoVP33_R", "LoVP34_R", "LoVP35_R", "LoVP36_R", "LoVP37_R", "LoVP38_R", "LoVP39_R", "LoVP40_R", "LoVP41_R", "LoVP42_R", "LoVP43_R", "LoVP44_R", "LoVP45_R", "LoVP46_R", "LoVP47_R", "LoVP48_R", "LoVP49_R", "LoVP50_R", "LoVP51_R", "LoVP52_R", "LoVP53_R", "LoVP54_R", "LoVP55_R", "LoVP56_R", "LoVP57_R", "LoVP58_R", "LoVP59_R", "LoVP60_R", "LoVP61_R", "LoVP62_R", "LoVP63_R", "LoVP64_R", "LoVP65_R", "LoVP66_R", "LoVP67_R", "LoVP68_R", "LoVP69_R", "LoVP70_R", "LoVP71_R", "LoVP72_R", "LoVP73_R", "LoVP74_R", "LoVP75_R", "LoVP76_R", "LoVP77_R", "LoVP78_R", "LoVP79_R", "LoVP80_R", "LoVP81_R", "LoVP82_R", "LoVP83_R", "LoVP84_R", "LoVP85_R", "LoVP86_R", "LoVP88_R", "LoVP89_R", "LoVP90a_R", "LoVP90b_R", "LoVP90c_R", "LoVP91_R", "LoVP92_R", "LoVP93_R", "LoVP94_R", "LoVP95_R", "LoVP96_R", "LoVP97_R", "LoVP98_R", "LoVP99_R", "LoVP100_R", "LoVP101_R", "LoVP102_R", "LoVP103_R", "LoVP105_R", "LoVP106_R", "LoVP107_R", "LoVP108_R", "LPC1_R", "LPC2_R", "LPLC1_R", "LPLC2_R", "LPLC4_R", "LPT21_R", "LPT22_R", "LPT23_R", "LPT26_R", "LPT27_R", "LPT28_R", "LPT29_R", "LPT30_R", "LPT31_R", "LPT49_R", "LPT50_R", "LPT51_R", "LPT52_R", "LPT54_R", "LPT100_R", "LPT101_R", "LT1a_R", "LT1b_R", "LT1c_R", "LT1d_R", "LT11_R", "LT43_R", "LT47_R", "LT51_R", "LT52_R", "LT54_R", "LT55_R", "LT59_R", "LT60_R", "LT61a_R", "LT61b_R", "LT62_R", "LT63_R", "LT64_R", "LT65_R", "LT66_R", "LT67_R", "LT68_R", "LT69_R", "LT72_R", "LT73_R", "LT74_R", "LT75_R", "LT76_R", "LT77_R", "LT78_R", "LT79_R", "LT80_R", "LT81_R", "LT82a_R", "LT82b_R", "LT83_R", "LT84_R", "LT85_R", "LT86_R", "LT87_R", "MeTu1_R", "MeTu2a_R", "MeTu2b_R", "MeTu3a_R", "MeTu3b_R", "MeTu3c_R", "MeTu4a_R", "MeTu4b_R", "MeTu4c_R", "MeTu4d_R", "MeTu4e_R", "MeTu4f_R", "MeVP1_R", "MeVP2_R", "MeVP3_R", "MeVP4_R", "MeVP5_R", "MeVP6_R", "MeVP7_R", "MeVP8_R", "MeVP9_R", "MeVP10_R", "MeVP11_R", "MeVP12_R", "MeVP14_R", "MeVP15_R", "MeVP16_R", "MeVP17_R", "MeVP18_R", "MeVP20_R", "MeVP21_R", "MeVP22_R", "MeVP23_R", "MeVP24_R", "MeVP25_R", "MeVP26_R", "MeVP27_R", "MeVP28_R", "MeVP29_R", "MeVP30_R", "MeVP31_R", "MeVP32_R", "MeVP33_R", "MeVP34_R", "MeVP35_R", "MeVP36_R", "MeVP38_R", "MeVP39_R", "MeVP40_R", "MeVP41_R", "MeVP42_R", "MeVP43_R", "MeVP45_R", "MeVP46_R", "MeVP47_R", "MeVP48_R", "MeVP49_R", "MeVP50_R", "MeVP51_R", "MeVP52_R", "MeVP53_R", "MeVP54_R", "MeVP55_R", "MeVP56_R", "MeVP57_R", "MeVP58_R", "MeVP59_R", "MeVP60_R", "MeVP61_R", "MeVP62_R", "MeVP63_R", "MeVP64_R", "MeVPaMe1_R", "MeVPaMe2_R", "MeVPLo1_R", "MeVPLo2_R", "MeVPLp1_R", "MeVPLp2_R", "MeVPMe1_R", "MeVPMe2_R", "MeVPMe3_R", "MeVPMe4_R", "MeVPMe5_R", "MeVPMe6_R", "MeVPMe7_R", "MeVPMe8_R", "MeVPMe9_R", "MeVPMe10_R", "MeVPMe11_R", "MeVPMe12_R", "MeVPMe13_R", "MeVPOL1_R", "Nod1_R", "Nod2_R", "Nod3_R", "Nod4_R", "Nod5_R", "s-LNv_R", "SLP249_R", "SLP250_R", "SMP217_R", "vCal1_R", "vCal2_R", "vCal3_R", "VS_R", "VSm_R", "VST1_R", "VST2_R"];
+const PAGES = "pages";
+
+const list = document.getElementById("list");
+const search = document.getElementById("search");
+const count = document.getElementById("count");
+const viewer = document.getElementById("viewer");
+const placeholder = document.getElementById("placeholder");
+const items = {};
+
+function pageUrl(name) {
+  return PAGES + "/" + encodeURIComponent(name) + ".html";
+}
+
+for (const name of INSTANCES) {
+  const li = document.createElement("li");
+  const a = document.createElement("a");
+  a.className = "name";
+  a.textContent = name;
+  a.href = "#" + encodeURIComponent(name);
+  const ext = document.createElement("a");
+  ext.className = "ext";
+  ext.textContent = "↗";
+  ext.title = "Open in new tab";
+  ext.target = "_blank";
+  ext.href = pageUrl(name);
+  li.appendChild(a);
+  li.appendChild(ext);
+  list.appendChild(li);
+  items[name] = li;
+}
+
+function select(name) {
+  if (!(name in items)) return;
+  for (const li of Object.values(items)) li.classList.remove("active");
+  items[name].classList.add("active");
+  viewer.src = pageUrl(name);
+  viewer.style.display = "";
+  placeholder.style.display = "none";
+  items[name].scrollIntoView({ block: "nearest" });
+}
+
+function applyFilter() {
+  const q = search.value.trim().toLowerCase();
+  let shown = 0;
+  for (const name of INSTANCES) {
+    const match = name.toLowerCase().includes(q);
+    items[name].classList.toggle("hidden", !match);
+    if (match) shown++;
+  }
+  count.textContent = shown + " / " + INSTANCES.length + " instances";
+}
+
+function fromHash() {
+  const h = decodeURIComponent(location.hash.replace(/^#/, ""));
+  if (h) select(h);
+}
+
+search.addEventListener("input", applyFilter);
+window.addEventListener("hashchange", fromHash);
+
+applyFilter();
+fromHash();
+</script>
+</body>
+</html>
