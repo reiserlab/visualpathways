@@ -32,6 +32,7 @@ from utils.core_data import (
     get_meta,
     get_ol_meta,
     get_sector_map,
+    is_cb_neuron,
 )
 from utils.ol_data import (
     _compute_directedness,
@@ -48,19 +49,17 @@ def get_cb_connectivity(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, force: bool = False,
 ) -> pd.DataFrame:
-    """Long-format connectivity for pre-neurons in the VCBN set (CB side).
+    """Long-format connectivity for pre-neurons in the CB analysis mask.
 
-    Mirrors `get_ol_connectivity` but filters the full `prop.npz` to rows whose
-    `instance_pre` is a VCBN type (`get_vcbn_types`). Adds per-instance median
-    hitting times and the `frac` = weight / Σ(weight) per pre-neuron.
+    Filters the full `prop.npz` to rows whose `instance_pre` passes
+    `core_data.is_cb_neuron`. Adds per-instance median hitting times and
+    `frac` = weight / full Σ(output weight) per pre-neuron.
+    `vic_thre` is retained for API/cache-key compatibility; it does not limit
+    the directedness pre-neuron set.
     """
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
-        vcbn = get_vcbn_types(
-            dataset=dataset, data_dir=data_dir, side_char=side_char,
-            vic_thre=vic_thre,
-        )
-        cb_instances = set(vcbn.instance.unique())
+        cb_instances = set(meta.loc[is_cb_neuron(meta), "instance"].unique())
 
         prop = sp.load_npz(data_dir / f"{dataset}_prop.npz").tocoo()
         conn = pd.DataFrame({"idx_pre": prop.row, "idx_post": prop.col, "weight": prop.data})
@@ -73,6 +72,7 @@ def get_cb_connectivity(
             }
         ).drop(columns="idx")
         conn = conn[conn["instance_pre"].isin(cb_instances)]
+        conn["total_weight_pre"] = conn.groupby("idx_pre")["weight"].transform("sum")
 
         conn = conn.merge(meta_small, left_on="idx_post", right_on="idx", how="left").rename(
             columns={
@@ -91,12 +91,12 @@ def get_cb_connectivity(
 
         conn = conn[~pd.isna(conn["hitting_time_pre"]) & ~pd.isna(conn["hitting_time_post"])]
         conn["hitting_time_diff"] = conn["hitting_time_post"] - conn["hitting_time_pre"]
-        conn["frac"] = conn["weight"] / conn.groupby("idx_pre")["weight"].transform("sum")
-        return conn.reset_index(drop=True)
+        conn["frac"] = conn["weight"] / conn["total_weight_pre"]
+        return conn.drop(columns="total_weight_pre").reset_index(drop=True)
 
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_connectivity_{vtag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_connectivity_cbmask_fullfrac_{vtag}", _compute, force=force,
     )
 
 
@@ -125,7 +125,7 @@ def get_cb_directedness(
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     tag = f"thre{hit_diff_thre}".replace(".", "p")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_directedness_{vtag}_{tag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_directedness_cbmask_fullfrac_{vtag}_{tag}", _compute, force=force,
     )
 
 
@@ -133,7 +133,7 @@ def get_cb_type_directedness(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, hit_diff_thre: float = 0.5, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-VCBN-instance (median) directedness, renormalised to sum=1."""
+    """Per-CB-instance median directedness, renormalised to sum=1."""
     def _compute():
         d = get_cb_directedness(
             dataset=dataset, data_dir=data_dir, side_char=side_char,
@@ -152,7 +152,7 @@ def get_cb_type_directedness(
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     tag = f"thre{hit_diff_thre}".replace(".", "p")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_type_directedness_{vtag}_{tag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_type_directedness_cbmask_fullfrac_{vtag}_{tag}", _compute, force=force,
     )
 
 
@@ -379,9 +379,9 @@ def get_ol_in_cb_participation(
     cb_frac_thre: float = 0.19,
     vic_thre: float = 5e-4, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-neuron participation (OL outputs + CB VCBN) in each CB cluster.
+    """Per-neuron participation (VPNs + CB VCBN) in each CB cluster.
 
-    Mirrors `_compute_participation` but restricts neurons to OL outputs on
+    Mirrors `_compute_participation` but restricts neurons to VPNs on
     the chosen side + CB VCBN instances, and the target clusters are CB
     clusters. Legacy nb 8 cell 23.
     """
@@ -395,7 +395,7 @@ def get_ol_in_cb_participation(
             frac_thre=cb_frac_thre, vic_thre=vic_thre,
         )
         side_word = _SIDE_WORD[side_char]
-        ol_out_mask = (meta.region == f"{side_word} OL") & (meta.main_groups == "OL output")
+        ol_out_mask = (meta.region == f"{side_word} OL") & (meta.main_groups == "VPN")
         cb_mask = meta.instance.isin(cb_clu.instance.values)
         meta_sub = meta[ol_out_mask | cb_mask].copy()
 
@@ -695,7 +695,7 @@ def get_ol_to_cb_weights(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, r2_thre: float = 0.05, force: bool = False,
 ) -> pd.DataFrame:
-    """Normalised effective-weight matrix OL-output × CB-type.
+    """Normalised effective-weight matrix VPN × CB-type.
 
     Uses the full `lat_flow_sum.npz` with instance-level aggregation.
     Restricted to CB types with `r2 > r2_thre` (from `get_rf_type_cb`) and
@@ -716,7 +716,7 @@ def get_ol_to_cb_weights(
         side_word = _SIDE_WORD[side_char]
         ol_types = combined[
             (combined["region"] == f"{side_word} OL")
-            & (combined["main_groups"] == "OL output")
+            & (combined["main_groups"] == "VPN")
             & (combined["r2"] > r2_thre)
         ].sort_values("size")["instance"].values
         cb_types = combined[
@@ -724,7 +724,7 @@ def get_ol_to_cb_weights(
         ].sort_values("size")["instance"].values
 
         inidx = meta[
-            (meta.region == f"{side_word} OL") & (meta.main_groups == "OL output")
+            (meta.region == f"{side_word} OL") & (meta.main_groups == "VPN")
         ].idx.values
         outidx = meta[meta.instance.isin(cb_types)].idx.values
         idx_to_instance = dict(zip(meta.idx, meta.instance))
@@ -751,9 +751,12 @@ def get_visual_system_sankey_connectivity(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     ol_frac_thre: float = 0.19, cb_frac_thre: float = 0.19,
     vic_thre: float = 5e-4,
-    in_instances=("L1_R", "L2_R", "L3_R", "R7_R", "R8_R"),
-    weight_thre: float = 5.0, min_plot_neurons: int = 10,
-    force: bool = False,
+    in_instances=(
+        "L1_R", "L2_R", "L3_R", "R7_R", "R8_R",
+        "R7d_R", "R8d_R", "HBeyelet_R",
+    ),
+    weight_thre: float = 5.0, min_plot_neurons: int = 120,
+    output_normalized: bool = True, force: bool = False,
 ) -> dict:
     """Full visual-system Sankey connectivity from visual inputs through OL/CB.
 
@@ -761,7 +764,8 @@ def get_visual_system_sankey_connectivity(
     membership has priority over non-VCBN CB/VCN membership; VIN, VPN, VCBN, and
     non-VCBN CB nodes are split by integer hitting-time layer. Connectivity is
     computed only for neuron pairs where the true integer post layer is greater
-    than the true integer pre layer. Plot-only node filtering and layer-6
+    than the true integer pre layer. If `output_normalized` is false, edge
+    weights are raw synapse counts. Plot-only node filtering and layer-6
     placement for left OL / VNC are recorded in `node_table` but do not affect
     `conn_diagram`.
     """
@@ -795,7 +799,7 @@ def get_visual_system_sankey_connectivity(
         vcbn_instances = set(cb_cluster_map)
         vpn_instances = set(ol_cluster_map)
         vin_instances = set(
-            ol_meta.loc[ol_meta["main_groups"] == "OL internal", "instance"]
+            ol_meta.loc[ol_meta["main_groups"] == "VIN", "instance"]
         )
         input_instances = set(in_instances)
 
@@ -826,7 +830,10 @@ def get_visual_system_sankey_connectivity(
         meta_sub.loc[input_idx, "layer"] = 0
 
         _assign(meta_sub["instance"].isin(vcbn_instances), "VCBN", cluster_map=cb_cluster_map)
-        _assign(meta_sub["region"].eq("CB"), "CB",)
+        _assign(
+            meta_sub["region"].eq("CB"),
+            "CB",
+        )
         _assign(meta_sub["instance"].isin(vpn_instances), "VPN", cluster_map=ol_cluster_map)
         _assign(meta_sub["instance"].isin(vin_instances), "VIN")
         _assign(meta_sub["region"].eq("VNC"), "VNC")
@@ -843,7 +850,7 @@ def get_visual_system_sankey_connectivity(
 
         vpn_idx = meta_sub["category"].eq("VPN")
         meta_sub.loc[vpn_idx, "diagram"] = [
-            f"c{int(c)}.{int(layer)}"
+            f"oc{int(c)}.{int(layer)}"
             for c, layer in zip(meta_sub.loc[vpn_idx, "cluster"], meta_sub.loc[vpn_idx, "layer"])
         ]
 
@@ -859,11 +866,14 @@ def get_visual_system_sankey_connectivity(
         meta_sub.loc[meta_sub["category"].eq("VNC"), "diagram"] = "VNC"
         meta_sub = meta_sub.dropna(subset=["diagram"]).copy()
 
-        final_display_layer = 7
-        meta_sub["display_layer"] = meta_sub["layer"]
+        final_display_layer = 6.5
+        meta_sub["display_layer"] = meta_sub["layer"].astype(float)
         final_mask = meta_sub["category"].isin(["left OL", "VNC"])
         meta_sub.loc[final_mask, "display_layer"] = final_display_layer
 
+        # VCNs (visual centrifugal CB->OL feedback) are excluded from the
+        # CB/VCBN categories. Any VCN that survives is contralateral and falls
+        # into the "left OL" sink; none may be labelled CB or VCBN.
         vcn_rows = meta_sub["main_groups"] == "VCN"
         assert not meta_sub.loc[vcn_rows, "category"].isin(["CB", "VCBN"]).any()
         input_layers = meta_sub.loc[
@@ -879,10 +889,13 @@ def get_visual_system_sankey_connectivity(
             index=diagram_names, columns=diagram_names,
         )
 
-        total_post = prop.sum(axis=1).A1.astype(float)
-        inv = np.zeros_like(total_post)
-        np.reciprocal(total_post, where=total_post != 0, out=inv)
-        inprop = prop.multiply(inv.reshape((-1, 1))).astype(np.float32)
+        if output_normalized:
+            total_post = prop.sum(axis=1).A1.astype(float)
+            inv = np.zeros_like(total_post)
+            np.reciprocal(total_post, where=total_post != 0, out=inv)
+            conn_matrix = prop.multiply(inv.reshape((-1, 1))).astype(np.float32)
+        else:
+            conn_matrix = prop.astype(np.float32)
 
         for pre_layer in sorted(meta_sub["layer"].unique()):
             inidx = meta_sub.loc[meta_sub["layer"].eq(pre_layer), "idx"].values
@@ -890,7 +903,7 @@ def get_visual_system_sankey_connectivity(
             if len(inidx) == 0 or len(outidx) == 0:
                 continue
             conn_i = result_summary(
-                inprop, inidx, outidx, idx_to_diagram, idx_to_diagram,
+                conn_matrix, inidx, outidx, idx_to_diagram, idx_to_diagram,
                 combining_method="sum", outprop=False,
                 display_threshold=0, display_output=False,
             )
@@ -913,7 +926,36 @@ def get_visual_system_sankey_connectivity(
             .reset_index()
         )
         node_table["plot_node"] = node_table["n_neurons"] >= min_plot_neurons
-        assert node_table.loc[node_table["plot_node"], "n_neurons"].ge(min_plot_neurons).all()
+        node_table["plot_node_reason"] = np.where(
+            node_table["plot_node"], "min_neurons", "",
+        )
+
+        input_nodes = node_table["category"].eq("visual input")
+        node_table.loc[input_nodes, "plot_node"] = True
+        node_table.loc[input_nodes, "plot_node_reason"] = "visual_input"
+
+        for category in ("VPN", "VCBN"):
+            cluster_nodes = node_table[
+                node_table["category"].eq(category) & node_table["cluster"].notna()
+            ].copy()
+            if cluster_nodes.empty:
+                continue
+            keep_idx = (
+                cluster_nodes.sort_values(
+                    ["cluster", "n_neurons", "layer_min"],
+                    ascending=[True, False, True],
+                    kind="stable",
+                )
+                .groupby("cluster", sort=False)
+                .head(1)
+                .index
+            )
+            node_table.loc[keep_idx, "plot_node"] = True
+            empty_reason = node_table.loc[keep_idx, "plot_node_reason"].eq("")
+            node_table.loc[
+                node_table.loc[keep_idx].index[empty_reason],
+                "plot_node_reason",
+            ] = f"{category}_cluster_representative"
 
         return {
             "conn_diagram": conn_diagram,
@@ -926,14 +968,20 @@ def get_visual_system_sankey_connectivity(
             "n_cb_clu": int(cb_clusters["cluster"].max()),
             "weight_thre": weight_thre,
             "min_plot_neurons": min_plot_neurons,
+            "output_normalized": output_normalized,
+            "weight_units": (
+                "output-normalized synapse fraction"
+                if output_normalized else "synapse count"
+            ),
             "final_display_layer": final_display_layer,
         }
 
     otag = f"{ol_frac_thre:.3f}".replace(".", "p")
     ctag = f"{cb_frac_thre:.3f}".replace(".", "p")
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
+    norm_tag = "outnorm" if output_normalized else "rawsyn"
     return cached_pickle(
-        f"{dataset}_{side_char}_visual_system_sankey_v4_ol{otag}_cb{ctag}_{vtag}_w{weight_thre:g}_n{min_plot_neurons}",
+        f"{dataset}_{side_char}_visual_system_sankey_v7_{norm_tag}_ol{otag}_cb{ctag}_{vtag}_w{weight_thre:g}_n{min_plot_neurons}",
         _compute, force=force,
     )
 

@@ -18,7 +18,7 @@ def load_colors():
     """
     colored_main_groups_df = pd.DataFrame(
         ['#90f0a6', '#ffc4e2', '#64a0d1', "#cc9e4f", "#616161"],
-        index=['visual input', 'OL internal', 'OL output', 'CB input', 'other'],
+        index=['visual input', 'VIN', 'VPN', 'VCN', 'other'],
         columns=['color'],
     )
     colored_region_df = pd.DataFrame(

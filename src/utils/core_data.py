@@ -25,7 +25,7 @@ from utils.config import DATA_DIR, DATASET, HIT_THRE, N_FLOW, PARAMS_DIR, SIDE_C
 
 _SIDE_WORD = {"r": "right", "l": "left"}
 
-_LAYER_EXAMPLE_TYPES = ['T4a']
+_LAYER_EXAMPLE_TYPES = ['Mi4', 'T4a']
 
 
 def _load_meta_groups(dataset: str, data_dir) -> pd.DataFrame:
@@ -45,7 +45,7 @@ def _load_meta_groups(dataset: str, data_dir) -> pd.DataFrame:
     seed_types = ["L1", "L2", "L3", "R8", "R7", "R8d", "R7d", "HBeyelet"]
     table_df = pd.read_excel(PARAMS_DIR / "Nern-et-al_SuppTable01_Cell-types-and-counts.xlsx")
     table_df["main_groups"] = table_df["main groups"].replace(
-        {"ONCN": "OL internal", "ONIN": "OL internal", "VPN": "OL output", "VCN": "CB input"}
+        {"ONCN": "VIN", "ONIN": "VIN", "VPN": "VPN", "VCN": "VCN"}
     )
     table_df.loc[
         table_df[table_df["cell type"].isin(seed_types)].index, "main_groups"

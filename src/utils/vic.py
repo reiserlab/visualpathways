@@ -56,7 +56,7 @@ def get_ol_type_vic(
         vic = vic.T
         vic.columns = ["VIC"]
         vic = vic.reset_index(names="bodyId")
-        vic["bodyId"] = vic["bodyId"].astype(int)
+        vic["bodyId"] = vic["bodyId"].astype("int64")  # not astype(int): int32 on Windows
         vic = vic.merge(
             ol_meta[["bodyId", "instance"]].drop_duplicates(),
             on="bodyId", how="left",
@@ -73,7 +73,7 @@ def get_ol_cb_vic_raw(
     force: bool = False,
 ) -> pd.DataFrame:
     """Per-body summed effective input weight from visual inputs (VIC) across
-    OL outputs + CB neurons. Uses the full `lat_flow_sum.npz`.
+    VPNs + CB neurons. Uses the full `lat_flow_sum.npz`.
 
     Returns a long df with columns `bodyId, VIC, region, instance,
     main_groups`. Matches legacy `computing_functions.compute_ol_cb_vic`
@@ -94,9 +94,9 @@ def get_ol_cb_vic_raw(
             (meta.main_groups == "visual input") & (meta.side == side_word)
         ].idx.values
 
-        # OL outputs on this side
+        # VPNs on this side
         outidx_ol = meta[
-            (meta.region == f"{side_word} OL") & (meta.main_groups == "OL output")
+            (meta.region == f"{side_word} OL") & (meta.main_groups == "VPN")
         ].index.values
         vic_ol = result_summary(
             stepsn, inidx, outidx_ol,
@@ -106,7 +106,7 @@ def get_ol_cb_vic_raw(
         vic_ol.columns = ["bodyId", "VIC"]
         vic_ol["region"] = f"{side_word} OL"
 
-        # CB neurons (includes VCN / CB-input whose anatomical region is right/left OL)
+        # CB neurons (includes VCN / VCN whose anatomical region is right/left OL)
         outidx_cb = meta[is_cb_neuron(meta)].index.values
         vic_cb = result_summary(
             stepsn, inidx, outidx_cb,
@@ -117,7 +117,7 @@ def get_ol_cb_vic_raw(
         vic_cb["region"] = "CB"
 
         vic = pd.concat([vic_ol, vic_cb], axis=0).reset_index(drop=True)
-        vic["bodyId"] = vic["bodyId"].astype(int)
+        vic["bodyId"] = vic["bodyId"].astype("int64")  # not astype(int): int32 on Windows
         vic = vic.merge(
             meta[["bodyId", "instance", "main_groups"]].drop_duplicates(),
             on="bodyId", how="left",
@@ -135,7 +135,7 @@ def get_ol_cb_vic_type(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Per-(instance, region) median VIC for OL-output + CB neurons."""
+    """Per-(instance, region) median VIC for VPN + CB neurons."""
     def _compute():
         vic = get_ol_cb_vic_raw(
             dataset=dataset, data_dir=data_dir, side_char=side_char,

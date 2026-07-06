@@ -481,7 +481,7 @@ def _ol_non_visual_input_instances(
     """`_ol_instances` minus photoreceptors (R7/R8/R7d/R8d/HBeyelet).
 
     Excludes only true photoreceptors, not lamina VINs (L1–L5), so direct
-    RF fits are computed for L1–L5 alongside OL-internal/output neurons.
+    RF fits are computed for L1–L5 alongside VIN/VPN neurons.
     """
     meta = get_meta(dataset=dataset, data_dir=data_dir)
     return _ol_instances(dataset, data_dir, side_char) - set(
@@ -498,7 +498,9 @@ def get_input_rf_raw_ol(
     Reads `data/{source_stem}_input_syn_per_col.parquet` (default
     `{dataset}_OL_{side_char}`), restricts to OL instances excluding
     photoreceptors (R7/R8/R7d/R8d/HBeyelet) and R1-R6 — L1–L5 are included.
-    Fits a 2D
+    Keeps only each instance's **majority input neuropil** (the ROI holding the
+    most post-synapses) so a neuron spanning multiple neuropils yields a single
+    ARF / size estimate. Fits a 2D
     Gaussian per (instance, roi, bodyId) on per-column `synapse_frac` as
     `effective weight`, with `amp = sum(effective weight)`. Cleaned via
     `_clean_rf_params`, cached as parquet.
@@ -514,6 +516,18 @@ def get_input_rf_raw_ol(
         raw = pd.read_parquet(data_dir / f"{stem}_input_syn_per_col.parquet")
         instances = _ol_non_visual_input_instances(dataset, data_dir, side_char)
         raw = raw[raw["instance"].isin(instances)].copy()
+        # Retain only each instance's majority input neuropil: the ROI holding
+        # the most post-synapses. `_fetch_input_neuropil` keeps every ROI with
+        # >= 40% of post-synapses, so a type can span two neuropils; collapse to
+        # the dominant one so each neuron contributes a single ARF.
+        syn_by_roi = (
+            raw.groupby(["instance", "roi"])["synapse_count"].sum().reset_index()
+        )
+        top_roi = syn_by_roi.loc[
+            syn_by_roi.groupby("instance")["synapse_count"].idxmax(),
+            ["instance", "roi"],
+        ]
+        raw = raw.merge(top_roi, on=["instance", "roi"], how="inner")
         raw["effective weight"] = raw["synapse_frac"]
 
         rows = []
@@ -631,20 +645,27 @@ def get_rf_comparison_type(
 
 def get_experimental_rf_sizes(
     *, dataset: str = DATASET, data_dir=DATA_DIR,
-    source_file: str = "fly_literature_experiments.xlsx",
+    source_file: str = "TableS2_experimental_data.xlsx",
     sheet: str = "RF size", force: bool = False,
 ) -> pd.DataFrame:
-    """Experimental RF sizes from a fly-literature spreadsheet sheet.
+    """Experimental RF sizes from the experimental-data spreadsheet sheet.
 
-    Adds `instance = "Neuron type" + '_R'`. Keeps the sheet's native columns
-    (`size`, `sx`, `sy`, `FWHMx`, `FWHMy`, `Reference` for sheet 'RF size';
-    `size_center`, `size_ellipse`, ... for sheet 'RF size CC').
+    Resolves `*` wildcards (e.g. `T4*` → `T4a..T4d`), replicating the row's
+    RF values across the matching cell types. Adds `instance = cell_type +
+    '_R'`. Keeps the sheet's native columns (`size`, `sx`, `sy`, `FWHMx`,
+    `FWHMy`, `Reference` for sheet 'RF size'; `mean_short_axis`,
+    `mean_long_axis`, `size_ellipse`, ... for sheet 'RF size CC').
     """
     def _compute():
+        from utils.polarity import _expand_wildcards, _side_cell_types
         df = pd.read_excel(PARAMS_DIR / source_file, sheet_name=sheet)
         df = df[~df["Neuron type"].isna()].copy()
-        df["instance"] = df["Neuron type"].astype(str) + "_R"
-        df = df.rename(columns={"Neuron type": "cell_type"})
+        universe = _side_cell_types(dataset, data_dir, "r")
+        df["cell_type"] = df["Neuron type"].apply(
+            lambda c: _expand_wildcards([str(c).strip()], universe) or [str(c).strip()]
+        )
+        df = df.explode("cell_type").drop(columns=["Neuron type"])
+        df["instance"] = df["cell_type"].astype(str) + "_R"
         return df.reset_index(drop=True)
 
     tag = sheet.replace(" ", "_")
@@ -691,6 +712,8 @@ def get_rf_raw_cb(
         params = params.merge(sign, on="instance", how="left")
         mg = meta.groupby("instance")["main_groups"].first().reset_index()
         params = params.merge(mg, on="instance", how="left")
+        # VCNs are excluded from the VCBN set (see `is_cb_neuron`), so `params`
+        # carries no VCN rows here — no region relabelling is needed.
         return params.reset_index(drop=True)
 
     tag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
@@ -753,6 +776,80 @@ def get_rf_types_combined(
     tag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     return cached_parquet(
         f"{dataset}_OL_{side_char}_rf_types_combined_{tag}", _compute, force=force,
+    )
+
+
+def get_rf_ahull_neuron(
+    *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
+) -> pd.DataFrame:
+    """Per-neuron alpha-hull RF size for Main Fig. 6b.
+
+    One row per neuron, pooling OL intrinsic neurons
+    (`meta_ON_ahull_cumsum60.pkl`) with VPNs & VCBNs
+    (`meta_VP_CB_ahull_cumsum60.pkl`). `ahull_size` is the cumsum-60 alpha hull
+    in column² (×25 → deg² inside `plot_rf_size_per_layer`). Per-neuron
+    `hitting_time` is joined from the flow table (`get_flow`) by `idx`; neurons
+    with no flow hitting time or no finite ahull are dropped. `region` is
+    anatomical: 'right OL'/'left OL' for the OL pkl (by `side`), the stored
+    region for VPN/CB.
+
+    Keeps per-neuron resolution (every neuron of a type contributes its own
+    hull), unlike the per-instance `get_rf_types_combined`.
+    """
+    import pickle
+    from utils.config import CACHE_PROC_DIR
+    from utils.core_data import get_flow
+
+    cols = ["bodyId", "idx", "instance", "cell_type", "ahull_size"]
+    with open(CACHE_PROC_DIR / "meta_ON_ahull_cumsum60.pkl", "rb") as fh:
+        on = pickle.load(fh)
+    on = on[cols + ["side"]].copy()
+    on["region"] = on["side"].astype(str) + " OL"
+    on = on.drop(columns="side")
+    with open(CACHE_PROC_DIR / "meta_VP_CB_ahull_cumsum60.pkl", "rb") as fh:
+        vp = pickle.load(fh)
+    vp = vp[cols + ["region"]].copy()
+
+    nrn = pd.concat([on, vp], ignore_index=True).dropna(subset=["ahull_size"])
+    flow_ht = (
+        get_flow(dataset=dataset, data_dir=data_dir, side_char=side_char)
+        .set_index("idx")["hitting_time"]
+    )
+    nrn["hitting_time"] = nrn["idx"].map(flow_ht)
+    return nrn.dropna(subset=["hitting_time"]).reset_index(drop=True)
+
+
+def get_rf_ahull_type_cb(
+    *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
+) -> pd.DataFrame:
+    """Per-instance median alpha-hull RF size for VPN + VCBN, from
+    `meta_VP_CB_ahull_cumsum60.pkl`.
+
+    One row per instance with median `ahull_size` (col², ×25 → deg²), median
+    `hitting_time`, `region` ('right OL' for VPN, 'CB' for VCBN) and
+    `main_groups`. Replaces the 2D-Gaussian `size` used in the CB RF-size SI
+    panels (SI Fig. 10b/c/d). Per-instance companion to the per-neuron
+    `get_rf_ahull_neuron` (Main Fig. 6b); both read the same alpha-hull cache,
+    so neither depends on the 2D-Gaussian fits.
+
+    `dataset`/`data_dir`/`side_char` are accepted for signature parity with the
+    sibling RF getters; the cache filename is fixed (not dataset-tagged).
+    """
+    import pickle
+    from utils.config import CACHE_PROC_DIR
+
+    with open(CACHE_PROC_DIR / "meta_VP_CB_ahull_cumsum60.pkl", "rb") as fh:
+        vp = pickle.load(fh)
+    vp = vp.dropna(subset=["ahull_size"])
+    return (
+        vp.groupby("instance")
+        .agg(
+            ahull_size=("ahull_size", "median"),
+            hitting_time=("hitting_time", "median"),
+            region=("region", "first"),
+            main_groups=("main_groups", "first"),
+        )
+        .reset_index()
     )
 
 

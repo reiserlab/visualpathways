@@ -13,7 +13,8 @@ FIG_DIR = PROJECT_ROOT / "results"
 HTML_FIG_DIR = FIG_DIR / "html_figures"
 
 DATASET = "malecns_v1.0"
-FIG_DATASET = "malecns_v0.9"
+# Figures are named after the data version; keep these in sync.
+FIG_DATASET = DATASET
 SIDE = "right"
 N_FLOW = 20
 HIT_THRE = 0.1
@@ -26,7 +27,7 @@ def load_colors():
     """Return (region, main_groups, sign, seed) color DataFrames."""
     colored_main_groups_df = pd.DataFrame(
         ["#90f0a6", "#ffc4e2", "#64a0d1", "#cc9e4f", "#616161"],
-        index=["visual input", "OL internal", "OL output", "CB input", "other"],
+        index=["visual input", "VIN", "VPN", "VCN", "other"],
         columns=["color"],
     )
     colored_region_df = pd.DataFrame(

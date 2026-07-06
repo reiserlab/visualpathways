@@ -46,7 +46,7 @@ def _load_meta_groups(dataset: str, data_dir) -> pd.DataFrame:
     seed_types = ["L1", "L2", "L3", "R8", "R7", "R8d", "R7d", "HBeyelet"]
     table_df = pd.read_excel(PARAMS_DIR / "Nern-et-al_SuppTable01_Cell-types-and-counts.xlsx")
     table_df["main_groups"] = table_df["main groups"].replace(
-        {"ONCN": "OL internal", "ONIN": "OL internal", "VPN": "OL output", "VCN": "CB input"}
+        {"ONCN": "VIN", "ONIN": "VIN", "VPN": "VPN", "VCN": "VCN"}
     )
     table_df.loc[
         table_df[table_df["cell type"].isin(seed_types)].index, "main_groups"
@@ -125,7 +125,7 @@ def get_meta(*, dataset: str = DATASET, data_dir=DATA_DIR, force: bool = False) 
 def is_cb_neuron(meta: pd.DataFrame) -> pd.Series:
     """CB-analysis mask: anatomical CB-region neurons"""
     return meta["region"] == "CB"
-    
+
 
 def get_flow(
     *, dataset: str = DATASET, data_dir=DATA_DIR,
@@ -614,13 +614,13 @@ def get_ol_features(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Visual-input → OL-output feature vectors (heavy compute via lat_flow_sum)."""
+    """Visual-input → VPN feature vectors (heavy compute via lat_flow_sum)."""
     def _compute():
         ol_meta = get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
         stepsn = get_ol_stepsn_sum(dataset=dataset, data_dir=data_dir, side_char=side_char)
         idx_to_instance = dict(zip(ol_meta.idx, ol_meta.instance))
         in_inst = ol_meta[ol_meta.main_groups == "visual input"].instance.unique()
-        out_inst = ol_meta[ol_meta.main_groups == "OL output"].instance.unique()
+        out_inst = ol_meta[ol_meta.main_groups == "VPN"].instance.unique()
         inidx = ol_meta[ol_meta.instance.isin(in_inst)].idx.values
         outidx = ol_meta[ol_meta.instance.isin(out_inst)].idx.values
         feat = _compute_feature_vectors(stepsn, inidx, outidx, idx_to_instance, idx_to_instance)
@@ -643,7 +643,7 @@ def get_ol_clusters(
     frac_thre: float = 0.21, method: str = "ward", metric: str = "euclidean",
     force: bool = False,
 ) -> pd.DataFrame:
-    """Flat clusters of OL-output instances (cached). frac_thre is a fraction of `Z[:,2].max()`."""
+    """Flat clusters of VPN instances (cached). frac_thre is a fraction of `Z[:,2].max()`."""
     import scipy.cluster.hierarchy as sch
 
     def _compute():
@@ -692,7 +692,7 @@ def get_ol_participation(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     frac_thre: float = 0.21, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-neuron participation in each OL-output cluster (cached)."""
+    """Per-neuron participation in each VPN cluster (cached)."""
     def _compute():
         meta_ol = get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
         stepsn = get_ol_stepsn_sum(dataset=dataset, data_dir=data_dir, side_char=side_char)
@@ -885,7 +885,7 @@ def get_ol_sankey_connectivity(
         flow_b["hit_bin"] = pd.cut(flow_b["hitting_time"], bins=bins, labels=labels).astype(float)
 
         ol_inst = ol_meta[
-            ol_meta.main_groups.isin(["visual input", "OL internal", "OL output"])
+            ol_meta.main_groups.isin(["visual input", "VIN", "VPN"])
         ].instance.unique()
         cb_inst = meta[is_cb_neuron(meta) | (meta.region == "left OL")].instance.unique()
         meta_sub = meta[meta.instance.isin(ol_inst) | meta.instance.isin(cb_inst)].reset_index(drop=True).copy()
@@ -911,7 +911,7 @@ def get_ol_sankey_connectivity(
         meta_sub.loc[in_idx, "diagram"] = meta_sub.loc[in_idx, "cell_type"]
         for i in range(3):
             oli_idx = meta_sub[
-                (meta_sub.main_groups == "OL internal") & (meta_sub.hit_bin == i + 1)
+                (meta_sub.main_groups == "VIN") & (meta_sub.hit_bin == i + 1)
             ].index
             meta_sub.loc[oli_idx, "diagram"] = f"OLI.{i + 1}"
             for j in range(n_clu):
@@ -1012,7 +1012,7 @@ def get_paths_to_instance(
 
 def get_participation_paths(
     instance: str, *, dataset: str = DATASET, data_dir=DATA_DIR,
-    side_char: str = SIDE_CHAR, out_main_group: str = 'OL output',
+    side_char: str = SIDE_CHAR, out_main_group: str = 'VPN',
     outprop: bool = False, force: bool = False,
 ) -> dict:
     """Effective-weight paths from `instance` → `out_main_group` in OL, for each
@@ -1254,12 +1254,14 @@ _POLARITY_INSTANCE_ALIASES: dict[str, str] = {}
 
 def get_polarity_experiments(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
-    source_file: str = "fly_literature_experiments.xlsx",
-    sheet: str = "input sensitivity",
+    source_file: str = "TableS2_experimental_data.xlsx",
+    sheet: str = "contrast selectivity",
     force: bool = False,
 ) -> pd.DataFrame:
-    """Curated ON/OFF polarity labels from the fly-literature experiments
-    spreadsheet.
+    """Curated ON/OFF polarity labels from the experimental-data spreadsheet.
+
+    NOTE: superseded by `utils/polarity.py` (moved there in Phase E.5); kept
+    here only as the legacy copy. Live callers use `utils.polarity`.
 
     Keeps rows whose `polarity` is exactly `'ON'` or `'OFF'` (drops NaN / any
     value with `'?'`). Splits comma-separated multi-type cells into one row
@@ -1271,6 +1273,8 @@ def get_polarity_experiments(
     def _compute():
         suffix = "_R" if side_char == "r" else "_L"
         df = pd.read_excel(PARAMS_DIR / source_file, sheet_name=sheet)
+        # TableS2 renamed the ON/OFF column 'polarity' -> 'Contrast selectivity'.
+        df = df.rename(columns={"Contrast selectivity": "polarity"})
         df = df[df["polarity"].isin(["ON", "OFF"])].copy()
         df["_parts"] = df["Neuron type"].apply(_split_polarity_types)
         # group_label captures the original multi-type entry before exploding,
@@ -1892,7 +1896,8 @@ def get_experimental_rf_sizes(
 
     Adds `instance = "Neuron type" + '_R'`. Keeps the sheet's native columns
     (`size`, `sx`, `sy`, `FWHMx`, `FWHMy`, `Reference` for sheet 'RF size';
-    `size_center`, `size_ellipse`, ... for sheet 'RF size CC').
+    `mean_short_axis`, `mean_long_axis`, `size_ellipse`, ... for sheet
+    'RF size CC').
     """
     def _compute():
         df = pd.read_excel(PARAMS_DIR / source_file, sheet_name=sheet)
@@ -1909,19 +1914,17 @@ def get_cb_connectivity(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, force: bool = False,
 ) -> pd.DataFrame:
-    """Long-format connectivity for pre-neurons in the VCBN set (CB side).
+    """Long-format connectivity for pre-neurons in the CB analysis mask.
 
-    Mirrors `get_ol_connectivity` but filters the full `prop.npz` to rows whose
-    `instance_pre` is a VCBN type (`get_vcbn_types`). Adds per-instance median
-    hitting times and the `frac` = weight / Σ(weight) per pre-neuron.
+    Filters the full `prop.npz` to rows whose `instance_pre` passes
+    `is_cb_neuron`. Adds per-instance median hitting times and
+    `frac` = weight / full Σ(output weight) per pre-neuron.
+    `vic_thre` is retained for API/cache-key compatibility; it does not limit
+    the directedness pre-neuron set.
     """
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
-        vcbn = get_vcbn_types(
-            dataset=dataset, data_dir=data_dir, side_char=side_char,
-            vic_thre=vic_thre,
-        )
-        cb_instances = set(vcbn.instance.unique())
+        cb_instances = set(meta.loc[is_cb_neuron(meta), "instance"].unique())
 
         prop = sp.load_npz(data_dir / f"{dataset}_prop.npz").tocoo()
         conn = pd.DataFrame({"idx_pre": prop.row, "idx_post": prop.col, "weight": prop.data})
@@ -1934,6 +1937,7 @@ def get_cb_connectivity(
             }
         ).drop(columns="idx")
         conn = conn[conn["instance_pre"].isin(cb_instances)]
+        conn["total_weight_pre"] = conn.groupby("idx_pre")["weight"].transform("sum")
 
         conn = conn.merge(meta_small, left_on="idx_post", right_on="idx", how="left").rename(
             columns={
@@ -1952,12 +1956,12 @@ def get_cb_connectivity(
 
         conn = conn[~pd.isna(conn["hitting_time_pre"]) & ~pd.isna(conn["hitting_time_post"])]
         conn["hitting_time_diff"] = conn["hitting_time_post"] - conn["hitting_time_pre"]
-        conn["frac"] = conn["weight"] / conn.groupby("idx_pre")["weight"].transform("sum")
-        return conn.reset_index(drop=True)
+        conn["frac"] = conn["weight"] / conn["total_weight_pre"]
+        return conn.drop(columns="total_weight_pre").reset_index(drop=True)
 
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_connectivity_{vtag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_connectivity_cbmask_fullfrac_{vtag}", _compute, force=force,
     )
 
 
@@ -1986,7 +1990,7 @@ def get_cb_directedness(
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     tag = f"thre{hit_diff_thre}".replace(".", "p")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_directedness_{vtag}_{tag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_directedness_cbmask_fullfrac_{vtag}_{tag}", _compute, force=force,
     )
 
 
@@ -1994,7 +1998,7 @@ def get_cb_type_directedness(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, hit_diff_thre: float = 0.5, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-VCBN-instance (median) directedness, renormalised to sum=1."""
+    """Per-CB-instance median directedness, renormalised to sum=1."""
     def _compute():
         d = get_cb_directedness(
             dataset=dataset, data_dir=data_dir, side_char=side_char,
@@ -2013,7 +2017,7 @@ def get_cb_type_directedness(
     vtag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
     tag = f"thre{hit_diff_thre}".replace(".", "p")
     return cached_parquet(
-        f"{dataset}_cb_{side_char}_type_directedness_{vtag}_{tag}", _compute, force=force,
+        f"{dataset}_cb_{side_char}_type_directedness_cbmask_fullfrac_{vtag}_{tag}", _compute, force=force,
     )
 
 
@@ -2231,9 +2235,9 @@ def get_ol_in_cb_participation(
     cb_frac_thre: float = 0.19,
     vic_thre: float = 5e-4, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-neuron participation (OL outputs + CB VCBN) in each CB cluster.
+    """Per-neuron participation (VPNs + CB VCBN) in each CB cluster.
 
-    Mirrors `_compute_participation` but restricts neurons to OL outputs on
+    Mirrors `_compute_participation` but restricts neurons to VPNs on
     the chosen side + CB VCBN instances, and the target clusters are CB
     clusters. Legacy nb 8 cell 23.
     """
@@ -2247,7 +2251,7 @@ def get_ol_in_cb_participation(
             frac_thre=cb_frac_thre, vic_thre=vic_thre,
         )
         side_word = _SIDE_WORD[side_char]
-        ol_out_mask = (meta.region == f"{side_word} OL") & (meta.main_groups == "OL output")
+        ol_out_mask = (meta.region == f"{side_word} OL") & (meta.main_groups == "VPN")
         cb_mask = meta.instance.isin(cb_clu.instance.values)
         meta_sub = meta[ol_out_mask | cb_mask].copy()
 
@@ -2587,6 +2591,8 @@ def get_rf_raw_cb(
         params = params.merge(sign, on="instance", how="left")
         mg = meta.groupby("instance")["main_groups"].first().reset_index()
         params = params.merge(mg, on="instance", how="left")
+        # VCNs are excluded from the VCBN set (see `is_cb_neuron`), so `params`
+        # carries no VCN rows here — no region relabelling is needed.
         return params.reset_index(drop=True)
 
     tag = f"{vic_thre:.1e}".replace(".", "p").replace("-", "m")
@@ -2656,7 +2662,7 @@ def get_ol_to_cb_weights(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     vic_thre: float = 5e-4, r2_thre: float = 0.05, force: bool = False,
 ) -> pd.DataFrame:
-    """Normalised effective-weight matrix OL-output × CB-type.
+    """Normalised effective-weight matrix VPN × CB-type.
 
     Uses the full `lat_flow_sum.npz` with instance-level aggregation.
     Restricted to CB types with `r2 > r2_thre` (from `get_rf_type_cb`) and
@@ -2677,7 +2683,7 @@ def get_ol_to_cb_weights(
         side_word = _SIDE_WORD[side_char]
         ol_types = combined[
             (combined["region"] == f"{side_word} OL")
-            & (combined["main_groups"] == "OL output")
+            & (combined["main_groups"] == "VPN")
             & (combined["r2"] > r2_thre)
         ].sort_values("size")["instance"].values
         cb_types = combined[
@@ -2685,7 +2691,7 @@ def get_ol_to_cb_weights(
         ].sort_values("size")["instance"].values
 
         inidx = meta[
-            (meta.region == f"{side_word} OL") & (meta.main_groups == "OL output")
+            (meta.region == f"{side_word} OL") & (meta.main_groups == "VPN")
         ].idx.values
         outidx = meta[meta.instance.isin(cb_types)].idx.values
         idx_to_instance = dict(zip(meta.idx, meta.instance))

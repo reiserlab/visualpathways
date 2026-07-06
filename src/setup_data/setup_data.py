@@ -124,14 +124,16 @@ def get_sorted_nodes(conn_df: pd.DataFrame) -> list[int]:
 
 
 def fetch_neuron_metadata(bodyIds, client: Client) -> pd.DataFrame:
-    """Fetch bodyId, instance, cell_type, nt, superclass, subclass, class."""
+    """Fetch bodyId, instance, cell_type, nt, superclass, subclass, class,
+    dimorphism."""
     cql = f"""
         WITH {list(bodyIds)} as bodyIds
         MATCH(n:Neuron)
         WHERE n.bodyId in bodyIds
         RETURN n.bodyId as bodyId, n.instance as instance, n.type as cell_type,
                n.consensusNt as nt, n.superclass as superclass,
-               n.subclass as subclass, n.class as class
+               n.subclass as subclass, n.class as class,
+               n.dimorphism as dimorphism
     """
     neu_df = client.fetch_custom(cql)
     meta = pd.DataFrame({"bodyId": list(bodyIds)})

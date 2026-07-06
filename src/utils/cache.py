@@ -14,9 +14,26 @@ import scipy.sparse as sp
 from utils.config import CACHE_PROC_DIR
 
 
+_GROUP_NAME_RENAMES = {
+    "CB " + "input": "VCN",
+    "OL " + "internal": "VIN",
+    "OL " + "output": "VPN",
+}
+
+
 def _path(name: str, ext: str) -> Path:
     CACHE_PROC_DIR.mkdir(parents=True, exist_ok=True)
     return CACHE_PROC_DIR / f"{name}.{ext}"
+
+
+def _canonicalize_group_names(df: pd.DataFrame) -> pd.DataFrame:
+    if not any(col for col in df.columns if col.startswith("main_group")):
+        return df
+    out = df.copy()
+    for col in out.columns:
+        if col.startswith("main_group"):
+            out[col] = out[col].replace(_GROUP_NAME_RENAMES)
+    return out
 
 
 def cached_parquet(name, compute_fn, *, force=False, verbose=False, **kwargs):
@@ -24,11 +41,11 @@ def cached_parquet(name, compute_fn, *, force=False, verbose=False, **kwargs):
     if p.exists() and not force:
         if verbose:
             print(f"[cache] loading from cache: {p}")
-        return pd.read_parquet(p)
+        return _canonicalize_group_names(pd.read_parquet(p))
     if verbose:
         reason = "force re-compute" if p.exists() else "no cache found"
         print(f"[cache] computing ({reason}), will write: {p}")
-    df = compute_fn(**kwargs)
+    df = _canonicalize_group_names(compute_fn(**kwargs))
     df.to_parquet(p, index=False)
     return df
 

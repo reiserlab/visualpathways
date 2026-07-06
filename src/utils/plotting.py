@@ -15,7 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # %%
-from utils.config import DATA_DIR, FIG_DATASET as DATASET, FIG_DIR, HTML_FIG_DIR, SIDE_CHAR
+from utils.config import DATA_DIR, FIG_DATASET as DATASET, FIG_DIR, SIDE_CHAR
 
 
 # %%
@@ -65,8 +65,6 @@ def _save(fig, save_dir: Path | None, filename: str, *, html: bool = False, rast
     if html and _WRITE_HTML:
         stem = Path(filename).stem
         fig.write_html(save_dir / f"{stem}.html")
-        HTML_FIG_DIR.mkdir(parents=True, exist_ok=True)
-        fig.write_html(HTML_FIG_DIR / f"{stem}.html")
 
 
 # %%
@@ -293,7 +291,7 @@ def _box_scatter(plot_df, x_col, y_col, c_col, color_df, *, height=350, width=45
 # %%
 def _heatmatrix(
     mat, tick_labels, *, cmap="Greys", height=500, width=500, anno=None,
-    x_tick_labels=None, y_tick_labels=None,
+    x_tick_labels=None, y_tick_labels=None, font_size=18,
 ):
     x_tick_labels = list(tick_labels if x_tick_labels is None else x_tick_labels)
     y_tick_labels = list(tick_labels if y_tick_labels is None else y_tick_labels)
@@ -302,7 +300,7 @@ def _heatmatrix(
     fig = go.Figure(data=go.Heatmap(
         z=mat, x=x_tick_labels, y=y_tick_labels,
         colorscale=cmap, reversescale=False, showscale=True,
-        text=anno, texttemplate="%{text}", textfont={"size": 18},
+        text=anno, texttemplate="%{text}", textfont={"size": font_size},
     ))
     n_diag = min(n_x, n_y)
     fig.add_shape(type="line", x0=-0.5, y0=-0.5, x1=n_diag - 0.5, y1=n_diag - 0.5,
@@ -312,7 +310,7 @@ def _heatmatrix(
         xaxis_tickvals=list(range(n_x)), xaxis_ticktext=x_tick_labels,
         yaxis_tickvals=list(range(n_y)), yaxis_ticktext=y_tick_labels,
         paper_bgcolor="white", plot_bgcolor="white",
-        font=dict(family="arial", size=18),
+        font=dict(family="arial", size=font_size),
         height=height, width=width,
         xaxis=dict(scaleanchor="y", scaleratio=1),
         yaxis=dict(scaleanchor="x", scaleratio=1),
@@ -1310,6 +1308,16 @@ def plot_ol_layers_violin(
 # %%
 _CLUSTER_BLUES = ["#041f4a", "#08306b", "#08519c", "#2171b5", "#4292c6",
                   "#6baed6", "#9ecae1", "#c6dbef", "#deebf7"]
+
+# VCBN cluster -> OL cluster colour key, so VCBN cluster colours stay consistent
+# between the Main Fig. 6a Sankey (plot_visual_system_sankey) and the VCN-input
+# pie (plot_vcn_input_pie). Each cc is keyed to the oc that supplies it the most
+# input, i.e. argmax over OL rows of get_ol_cb_cluster_connectivity(0.19, 0.17)
+# (input-normalised). Regenerate this map if the OL/CB clustering changes.
+_VCBN_CC_TO_OC = {
+    "cc1": "oc6", "cc2": "oc8", "cc3": "oc7", "cc4": "oc6", "cc5": "oc4",
+    "cc6": "oc1", "cc7": "oc2", "cc8": "oc9", "cc9": "oc9", "cc10": "oc9",
+}
 _CLUSTER_TYPES = [
     "l-LNv", "MeTu2a", "aMe5", "MeTu1", "MeTu3c", "LC6", "MeTu4f", "LPLC2", "LC4",
 ]
@@ -1382,7 +1390,7 @@ def plot_clusters_dendrograms(
         above_threshold_color="black", orientation="right",
     )
     plt.axvline(x=thre, color="gray", linestyle="--")
-    plt.ylabel("clustered OL output types", fontsize=14)
+    plt.ylabel("clustered VPN types", fontsize=14)
     plt.xticks(
         ticks=[0, thre, 0.5 * Z[:, 2].max(), Z[:, 2].max()],
         labels=["0", f"{frac_thre:.2f}", "0.5", "1"],
@@ -1416,8 +1424,8 @@ def plot_clusters_correlation_matrix(
         fig.add_hline(y=cumulative[i] - .5, line_width=.5, line_color="gray")
         fig.add_vline(x=cumulative[i] - .5, line_width=.5, line_color="gray")
     fig.update_layout(
-        xaxis_title="clustered OL output types", xaxis_tickvals=[],
-        yaxis_title="clustered OL output types", yaxis_tickvals=[],
+        xaxis_title="clustered VPN types", xaxis_tickvals=[],
+        yaxis_title="clustered VPN types", yaxis_tickvals=[],
     )
     fig.update_yaxes(autorange="reversed")
     fig.update_traces(zmin=-1, zmax=1)
@@ -1443,7 +1451,7 @@ def plot_clusters_example_features(
     fig = _stacked_bars(plot_df, "out type", "effective weight", "in type",
                         colored_seed_df["color"].to_dict(),
                         xrot=-45, height=400, width=550)
-    _save(fig, save_dir, f"{dataset}{side_str}_in_out_examples.pdf")
+    _save(fig, save_dir, f"{dataset}{side_str}_in_out_examples.pdf", html=True)
     return fig
 
 
@@ -1452,8 +1460,14 @@ def plot_clusters_pathway_features(
     feature_df: pd.DataFrame, in_instances, cluster_df: pd.DataFrame,
     cluster_num: pd.Series, colored_seed_df: pd.DataFrame, *,
     dataset: str = DATASET, side_str: str = "", save_dir: Path | None = None,
+    xtick_fontsize: int | None = None, width: int = 550, height: int = 400,
 ):
-    """Stacked bar of cluster-mean normalised feature vector."""
+    """Stacked bar of cluster-mean normalised feature vector.
+
+    `xtick_fontsize` overrides the x-tick label size (default inherits the
+    base font, 18); pass a smaller value when many clusters crowd the axis.
+    `width`/`height` set the figure canvas size.
+    """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "pathways"
     sub = feature_df.loc[:, in_instances] / feature_df.loc[:, in_instances].sum(1).values[:, np.newaxis]
     df = sub.reset_index(names="instance").merge(cluster_df, on="instance")
@@ -1463,13 +1477,15 @@ def plot_clusters_pathway_features(
         columns={"level_0": "cluster", "level_1": "in type"}
     )
     fig = _stacked_bars(df, "cluster", "mean effective weight", "in type",
-                        colored_seed_df["color"].to_dict(), height=400, width=550)
+                        colored_seed_df["color"].to_dict(), height=height, width=width)
     n_clu = len(cluster_num)
     fig.update_layout(
         xaxis_tickvals=np.arange(1, n_clu + 1),
         xaxis_ticktext=[f"oc{i}<br>({cluster_num[i]})" for i in range(1, n_clu + 1)],
     )
-    _save(fig, save_dir, f"{dataset}{side_str}_in_out_pathways.pdf")
+    if xtick_fontsize is not None:
+        fig.update_xaxes(tickfont_size=xtick_fontsize)
+    _save(fig, save_dir, f"{dataset}{side_str}_in_out_pathways.pdf", html=True)
     return fig
 
 
@@ -1548,7 +1564,7 @@ def plot_clusters_participation(
 
     bins = np.linspace(0, n_clu + 1, n_clu + 2) - 0.5
     color_val = {"main_groups": colored_main_groups_df, "sign": colored_sign_df}
-    base = type_part[type_part["main_groups"].isin(["visual input", "OL internal"])]
+    base = type_part[type_part["main_groups"].isin(["visual input", "VIN"])]
     for val in ["main_groups", "sign"]:
         plot_df = base if val != "sign" else base[base.sign != 0]
         fig = _hist_lines(plot_df, "n_clusters", val, bins, color_val[val])
@@ -1588,7 +1604,7 @@ def plot_clusters_participation(
         value_vars=cluster_names, var_name="cluster", value_name="participation",
     )
     long_df = long_df[long_df["participation"] >= 2 / n_clu]
-    long_df = long_df[long_df["main_groups"].isin(["visual input", "OL internal"])].reset_index(drop=True)
+    long_df = long_df[long_df["main_groups"].isin(["visual input", "VIN"])].reset_index(drop=True)
     x_num = np.array([int(c[1:]) for c in long_df["cluster"].values])
     long_df["x"] = x_num + rng.uniform(-jitter, jitter, size=len(long_df))
     for val in ["main_groups", "sign"]:
@@ -1612,17 +1628,18 @@ def plot_clusters_participation(
 # %%
 def plot_clusters_intra_connectivity(
     intra: dict, *, dataset: str = DATASET, save_dir: Path | None = None,
-    filename_stem: str | None = None,
+    filename_stem: str | None = None, font_size: int = 18,
 ):
     """Cluster-cluster connectivity heatmap (output-normalised).
 
     Filename defaults to `{dataset}_outrel_{n_clu}_conn_matrix_clusters.pdf`
     (n_clu inferred from `intra['n_clu']`); pass an explicit `filename_stem`
-    to override."""
+    to override. `font_size` sets the overall label/title font."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "pathways"
     n = intra["n_clu"]
     tick_labels = [f"c{i}" for i in range(1, n + 1)]
-    fig = _heatmatrix(intra["matrix"], tick_labels, cmap="Greys", height=600, width=600)
+    fig = _heatmatrix(intra["matrix"], tick_labels, cmap="Greys", height=600, width=600,
+                      font_size=font_size)
     fig.update_layout(
         title=f"all weights: {intra['total_weight']: .0f}",
         xaxis_title="post", yaxis_title="pre",
@@ -1640,10 +1657,11 @@ def plot_clusters_intra_connectivity(
 # %%
 def plot_clusters_pathway_connectivity(
     pathways: dict, n_clu: int, *,
-    dataset: str = DATASET, save_dir: Path | None = None,
+    dataset: str = DATASET, save_dir: Path | None = None, font_size: int = 18,
 ):
     """Pathway-level connectivity heatmaps (cluster ↔ cluster, with/without self;
-    plus the 5 e/i breakdowns with/without self)."""
+    plus the 5 e/i breakdowns with/without self). `font_size` sets the overall
+    label/title font."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "pathways"
     figs = []
     cluster_names = [f"c{i}" for i in range(1, n_clu + 1)]
@@ -1657,7 +1675,8 @@ def plot_clusters_pathway_connectivity(
     inner = conn0[1:-1, 1:-1]
     tot = inner.sum()
     plot_mat = inner / inner.sum(1)[:, np.newaxis]
-    fig = _heatmatrix(plot_mat, cluster_names, cmap="Greys", height=600, width=600)
+    fig = _heatmatrix(plot_mat, cluster_names, cmap="Greys", height=600, width=600,
+                      font_size=font_size)
     fig.update_layout(title=f"all weights: {tot: .0f}", xaxis_title="post", yaxis_title="pre")
     fig.update_layout(xaxis_tickangle=0)
     fig.update_yaxes(autorange="reversed")
@@ -1668,7 +1687,8 @@ def plot_clusters_pathway_connectivity(
     inner_no_self = conn0[1:-1, 1:-1] - np.diag(diag0)[1:-1, 1:-1]
     tot = inner_no_self.sum()
     plot_mat = inner_no_self / inner_no_self.sum(1)[:, np.newaxis]
-    fig = _heatmatrix(plot_mat, cluster_names, cmap="Greys", height=600, width=600)
+    fig = _heatmatrix(plot_mat, cluster_names, cmap="Greys", height=600, width=600,
+                      font_size=font_size)
     fig.update_layout(title=f"without cell type-intrinsic weights: {tot: .0f}",
                       xaxis_title="post", yaxis_title="pre")
     fig.update_layout(xaxis_tickangle=0)
@@ -1683,7 +1703,8 @@ def plot_clusters_pathway_connectivity(
         m = pathways["conn"][i]
         tot = m.sum()
         plot_mat = m / m.sum(1)[:, np.newaxis]
-        fig = _heatmatrix(plot_mat, in_out_labels, cmap=cmap, height=600, width=600)
+        fig = _heatmatrix(plot_mat, in_out_labels, cmap=cmap, height=600, width=600,
+                          font_size=font_size)
         fig.update_layout(title=f"{title} weights: {tot: .0f}",
                           xaxis_title="post", yaxis_title="pre")
         fig.update_layout(xaxis_tickangle=0)
@@ -1696,7 +1717,8 @@ def plot_clusters_pathway_connectivity(
         m = pathways["conn"][i] - np.diag(pathways["diag"][i])
         tot = m.sum()
         plot_mat = m / m.sum(1)[:, np.newaxis]
-        fig = _heatmatrix(plot_mat, in_out_labels, cmap=cmap, height=600, width=600)
+        fig = _heatmatrix(plot_mat, in_out_labels, cmap=cmap, height=600, width=600,
+                          font_size=font_size)
         fig.update_layout(title=f"{title} weights: {tot: .0f}",
                           xaxis_title="post", yaxis_title="pre")
         fig.update_layout(xaxis_tickangle=0)
@@ -1711,271 +1733,144 @@ def plot_clusters_pathway_connectivity(
 
 
 # %%
-def plot_clusters_sankey(
-    sankey: dict, colored_main_groups_df: pd.DataFrame,
-    colored_seed_df: pd.DataFrame, colored_region_df: pd.DataFrame,
-    *, dataset: str = DATASET, save_dir: Path | None = None,
+def _prepare_flow_sankey_edges(
+    conn: pd.DataFrame, node_table: pd.DataFrame, *,
+    weight_thre: float, min_plot_neurons: int,
+    clustered_categories=("VPN", "VCBN"),
 ):
-    """Sankey diagram of inputs → OL internal/output clusters by hit_bin → CB / left OL.
+    """Shared edge preparation for both flow Sankeys.
 
-    Consumes the cached output of `pre.get_ol_sankey_connectivity()`. Node
-    positions are computed from the diagram label (`OLO{j}.{i}` → x by `i`,
-    y by `j`) so the layout adapts to the actual cluster count.
+    Chooses visible nodes (>= `min_plot_neurons` neurons, forced visual inputs,
+    plus one representative per cluster at its most-connected layer when the whole
+    cluster is otherwise hidden), remaps hidden nodes onto the nearest visible
+    same-category / same-cluster representative (tie-broken by total connections),
+    keeps only feed-forward edges above `weight_thre`, then reinforces connectivity
+    by layer position: inputs (first layer) keep an outgoing edge, terminal nodes
+    (last layer) an incoming edge, and every middle node both -- re-adding the
+    strongest sub-threshold edge in a missing direction. Returns
+    `(edges, merged_n_neurons)`, where `merged_n_neurons` sums the neuron counts of
+    every node folded into each visible node.
     """
-    save_dir = save_dir if save_dir is not None else FIG_DIR / "pathways"
-    conn = sankey["conn_diagram"]
-    meta_sub = sankey["meta_sub"]
-    n_clu = sankey["n_clu"]
-    weight_thre = sankey["weight_thre"]
+    nt = node_table
+    display_layer = nt["display_layer"].to_dict()
+    total_conn = conn.sum(axis=0).add(conn.sum(axis=1), fill_value=0)
 
-    edges = conn.unstack().reset_index(name="weight").rename(
-        columns={"level_0": "post", "level_1": "pre"},
-    )
-    edges = edges[edges.weight >= weight_thre].reset_index(drop=True)
+    visible = set(nt.index[
+        (nt["n_neurons"] >= min_plot_neurons) | (nt["category"] == "visual input")
+    ])
+    for category in clustered_categories:
+        cat_nodes = nt[nt["category"].eq(category)]
+        for clu in sorted(cat_nodes["cluster"].dropna().unique()):
+            members = cat_nodes.index[cat_nodes["cluster"].eq(clu)]
+            if visible.isdisjoint(members):
+                visible.add(total_conn.reindex(members).fillna(0).idxmax())
 
-    # ensure each OLO node has at least one in/out edge so Sankey doesn't drop it
-    for i in range(3):
-        for j in range(n_clu):
-            label = f"OLO{j + 1}.{i + 1}"
-            n_in = (edges["post"] == label).sum()
-            n_out = (edges["pre"] == label).sum()
-            if n_in == n_out == 0:
-                continue
-            if n_in == 0 and label in conn.columns:
-                src = conn[label].idxmax()
-                edges = pd.concat([edges, pd.DataFrame(
-                    {"post": [label], "pre": [src], "weight": [conn.loc[src, label]]}
-                )], ignore_index=True)
-            if n_out == 0 and label in conn.index:
-                dst = conn.loc[label].idxmax()
-                edges = pd.concat([edges, pd.DataFrame(
-                    {"post": [dst], "pre": [label], "weight": [conn.loc[label, dst]]}
-                )], ignore_index=True)
+    visible_list = sorted(visible)
 
-    diagram_names = list(set(edges["pre"].unique()) | set(edges["post"].unique()))
-
-    # node colors: use main_group for OLI/OLO; seed colors for inputs; region colors for CB / left OL
-    diagram_to_mg = dict(meta_sub[["diagram", "main_groups"]].drop_duplicates().values)
-    node_color = {}
-    for d in diagram_names:
-        if d.startswith("OLO"):
-            node_color[d] = "#64a0d1"  # OL output blue (overridden below per cluster)
-        elif d.startswith("OLI"):
-            node_color[d] = colored_main_groups_df.loc[diagram_to_mg.get(d, "OL internal"), "color"]
-        elif d in colored_seed_df.index:
-            node_color[d] = colored_seed_df.loc[d, "color"]
-        elif d in colored_region_df.index:
-            node_color[d] = colored_region_df.loc[d, "color"]
-        else:
-            node_color[d] = "#cccccc"
-    # cluster-specific blues for OLO nodes
-    cluster_color_map = _cluster_color_df(n_clu)["color"].to_dict()
-    for d in diagram_names:
-        if d.startswith("OLO"):
-            j = int(d[3:].split(".")[0])
-            node_color[d] = cluster_color_map[f"oc{j}"]
-
-    # programmatic positions: OL bins 0..3 + merged terminal box at bin 4.
-    x_for_bin = {0: 0.05, 1: 0.275, 2: 0.5, 3: 0.725, 4: 0.95}
-    seed_y = {
-        "L1": 0.95, "L2": 0.83, "L3": 0.71, "R7": 0.59, "R8": 0.47,
-        "R7d": 0.35, "R8d": 0.23, "HBeyelet": 0.11,
-    }
-    region_y = {"CB": 0.5}
-    pos_x, pos_y = [], []
-    for d in diagram_names:
-        if d in seed_y:
-            pos_x.append(0.05); pos_y.append(1 - seed_y[d])
-        elif d in region_y:
-            pos_x.append(0.95); pos_y.append(1 - region_y[d])
-        elif d.startswith("OLI."):
-            i = int(d.split(".")[1])
-            pos_x.append(x_for_bin[i]); pos_y.append(0.2)
-        elif d.startswith("OLO"):
-            j, i = d[3:].split(".")
-            pos_x.append(x_for_bin[int(i)])
-            pos_y.append(0.4 + (int(j) - 1) / max(n_clu - 1, 1) * 0.55)
-        else:
-            pos_x.append(0.5); pos_y.append(0.5)
-
-    node_index = {name: i for i, name in enumerate(diagram_names)}
-    fig = go.Figure(go.Sankey(
-        arrangement="snap",
-        node=dict(
-            pad=15, thickness=20,
-            line=dict(color="black", width=0.5),
-            label=["" for _ in diagram_names],
-            color=[node_color[d] for d in diagram_names],
-            x=pos_x, y=pos_y,
-        ),
-        link=dict(
-            source=edges["pre"].map(node_index),
-            target=edges["post"].map(node_index),
-            value=edges["weight"],
-            color="rgba(123, 123, 123, 0.4)",
-        ),
-    ))
-    fig.update_layout(width=800, height=450, font=dict(size=18, color="black", family="Arial"))
-    _save(fig, save_dir, f"{dataset}_sankey_pathways_w_OLL.pdf")
-    return fig
-
-
-def plot_visual_system_sankey(
-    sankey: dict, colored_main_groups_df: pd.DataFrame,
-    colored_seed_df: pd.DataFrame, colored_region_df: pd.DataFrame,
-    *, dataset: str = DATASET, save_dir: Path | None = None,
-    filename: str | None = None, show_labels: bool = True,
-):
-    """Sankey diagram from visual inputs through OL/VPN and CB/VCBN groups."""
-    save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
-    conn = sankey["conn_diagram"]
-    node_table = sankey["node_table"].copy().set_index("diagram")
-    weight_thre = sankey["weight_thre"]
-
-    raw_edges = conn.unstack().reset_index(name="weight").rename(
-        columns={"level_0": "post", "level_1": "pre"},
-    )
-    raw_edges = raw_edges[raw_edges["weight"] > 0].reset_index(drop=True)
-
-    visible_nodes = set(node_table.index[node_table["plot_node"]])
-    display_layer = node_table["display_layer"].to_dict()
-
-    def _remap_target(diagram: str) -> str | None:
-        if diagram in visible_nodes:
+    def _remap(diagram):
+        if diagram in visible:
             return diagram
-        if diagram not in node_table.index:
+        if diagram not in nt.index:
             return None
-
-        row = node_table.loc[diagram]
+        row = nt.loc[diagram]
         category = row["category"]
-        candidates = node_table[node_table["plot_node"] & node_table["category"].eq(category)].copy()
-        if category in {"VPN", "VCBN"}:
-            candidates = candidates[candidates["cluster"].eq(row["cluster"])]
-        if candidates.empty:
+        cands = nt.loc[visible_list]
+        cands = cands[cands["category"].eq(category)]
+        if category in clustered_categories:
+            cands = cands[cands["cluster"].eq(row["cluster"])]
+        if cands.empty:
             return None
+        order = pd.DataFrame({
+            "_ld": (cands["display_layer"].astype(float) - float(row["display_layer"])).abs(),
+            "_dl": cands["display_layer"].astype(float),
+            "_cr": -total_conn.reindex(cands.index).fillna(0).to_numpy(),
+        }, index=cands.index).sort_values(["_ld", "_dl", "_cr"], kind="stable")
+        return str(order.index[0])
 
-        candidates["_layer_dist"] = (
-            candidates["display_layer"].astype(float) - float(row["display_layer"])
-        ).abs()
-        candidates["_neuron_rank"] = -candidates["n_neurons"].astype(float)
-        candidates = candidates.sort_values(
-            ["_layer_dist", "display_layer", "_neuron_rank"],
-            kind="stable",
-        )
-        return str(candidates.index[0])
+    remap = {d: _remap(d) for d in nt.index}
 
-    remap = {diagram: _remap_target(diagram) for diagram in node_table.index}
-    raw_edges["pre"] = raw_edges["pre"].map(remap)
-    raw_edges["post"] = raw_edges["post"].map(remap)
-    raw_edges = raw_edges.dropna(subset=["pre", "post"])
-    raw_edges = raw_edges[raw_edges["pre"] != raw_edges["post"]]
-    raw_edges = (
-        raw_edges.groupby(["post", "pre"], as_index=False, sort=False)["weight"].sum()
+    raw = conn.unstack().reset_index(name="weight").rename(
+        columns={"level_0": "post", "level_1": "pre"},
     )
-    raw_edges = raw_edges[
-        raw_edges["pre"].map(display_layer) < raw_edges["post"].map(display_layer)
-    ].reset_index(drop=True)
+    raw = raw[raw["weight"] > 0]
+    raw["pre"] = raw["pre"].map(remap)
+    raw["post"] = raw["post"].map(remap)
+    raw = raw.dropna(subset=["pre", "post"])
+    raw = raw[raw["pre"] != raw["post"]]
+    raw = raw.groupby(["post", "pre"], as_index=False, sort=False)["weight"].sum()
+    raw = raw[raw["pre"].map(display_layer) < raw["post"].map(display_layer)]
 
-    edges = raw_edges[raw_edges["weight"] >= weight_thre].copy().reset_index(drop=True)
-    for label in sorted(visible_nodes, key=lambda d: (display_layer[d], d)):
-        has_available = (raw_edges["pre"].eq(label) | raw_edges["post"].eq(label)).any()
-        if not has_available:
-            continue
-        if not edges["post"].eq(label).any():
-            incoming_i = raw_edges[raw_edges["post"].eq(label)]
-            if not incoming_i.empty:
-                edges = pd.concat(
-                    [edges, incoming_i.nlargest(1, "weight")],
-                    ignore_index=True,
-                )
-        if not edges["pre"].eq(label).any():
-            outgoing_i = raw_edges[raw_edges["pre"].eq(label)]
-            if not outgoing_i.empty:
-                edges = pd.concat(
-                    [edges, outgoing_i.nlargest(1, "weight")],
-                    ignore_index=True,
-                )
-    edges = (
-        edges.groupby(["post", "pre"], as_index=False, sort=False)["weight"].sum()
-    )
-    if edges.empty:
-        raise ValueError("No Sankey edges remain after plotting filters.")
+    edges = raw[raw["weight"] > weight_thre].copy()
 
-    nodes = node_table.loc[sorted(visible_nodes)].copy()
-    merged_counts = node_table.groupby(node_table.index.map(remap))["n_neurons"].sum()
-    merged_counts = merged_counts.drop(index=[None], errors="ignore")
-    nodes["n_neurons"] = merged_counts.reindex(nodes.index).fillna(nodes["n_neurons"]).astype(int)
-    final_layer_mask = nodes["category"].isin(["left OL", "VNC"])
-    nodes.loc[final_layer_mask, "display_layer"] = 6
-    seed_order = {"L1": 0, "L2": 1, "L3": 2, "R7": 3, "R8": 4}
-    category_order = {
-        "visual input": 0, "VIN": 1, "CB": 2, "VPN": 3,
-        "VCBN": 4, "left OL": 5, "VNC": 6,
-    }
+    layers = sorted({display_layer[d] for d in visible})
+    first_layer, last_layer = layers[0], layers[-1]
+    have_in = set(edges["post"])
+    have_out = set(edges["pre"])
+    reinforced = []
+    for d in visible:
+        dl = display_layer[d]
+        if dl < last_layer and d not in have_out:
+            out = raw[raw["pre"] == d]
+            if not out.empty:
+                reinforced.append(out.loc[out["weight"].idxmax()])
+        if dl > first_layer and d not in have_in:
+            inc = raw[raw["post"] == d]
+            if not inc.empty:
+                reinforced.append(inc.loc[inc["weight"].idxmax()])
+    if reinforced:
+        edges = pd.concat([edges, pd.DataFrame(reinforced)], ignore_index=True)
+    edges = edges.groupby(["post", "pre"], as_index=False, sort=False)["weight"].sum()
 
-    def _sort_key(row):
-        diagram = row.name
-        category = row["category"]
-        if category == "visual input":
-            return (category_order[category], seed_order.get(diagram, 99), diagram)
-        cluster = row["cluster"]
-        cluster = int(cluster) if pd.notna(cluster) else 0
-        return (category_order.get(category, 99), cluster, diagram)
+    merged = nt.groupby([remap.get(d) for d in nt.index])["n_neurons"].sum()
+    merged = merged.drop(index=[None], errors="ignore")
+    return edges, merged
 
-    sort_keys = nodes.apply(_sort_key, axis=1, result_type="expand")
-    nodes[["_sort_group", "_sort_cluster", "_sort_name"]] = sort_keys
-    nodes = nodes.sort_values(
-        ["display_layer", "_sort_group", "_sort_cluster", "_sort_name"],
-        kind="stable",
-    )
-    diagram_names = list(nodes.index)
 
-    def _cluster_palette(prefix: str, n_clu: int, colors: list[str]) -> dict[str, str]:
-        if n_clu <= len(colors):
-            palette = colors[:n_clu]
-        else:
-            palette = (colors * ((n_clu // len(colors)) + 1))[:n_clu]
-        return {f"{prefix}{i + 1}": color for i, color in enumerate(palette)}
+def _render_flow_sankey(
+    nodes: pd.DataFrame, edges: pd.DataFrame, *,
+    explicit_y: dict[str, float] | None = None,
+    layer_bands: dict[float, tuple[float, float]] | None = None,
+    terminal_band: tuple[float, float] = (0.84, 0.94),
+    default_band: tuple[float, float] = (0.02, 0.98),
+    width: int = 2080, height: int = 672,
+    node_pad: float = 18.0, node_width: float = 0.012,
+    show_labels: bool = True, label_size: int = 24,
+    label_side: str = "right",
+    ribbon_color: str = "rgba(123, 123, 123, 0.35)",
+    weight_transform=None,
+) -> go.Figure:
+    """Render a flow-conserving Sankey with manual block / ribbon geometry.
 
-    n_ol_clu = max(int(sankey.get("n_ol_clu", 1)), 1)
-    n_cb_clu = max(int(sankey.get("n_cb_clu", 1)), 1)
-    ol_colors = _cluster_palette("oc", n_ol_clu, _CLUSTER_BLUES)
-    vcbn_colors = _cluster_palette(
-        "cc",
-        n_cb_clu,
-        ["#67000d", "#a50f15", "#cb181d", "#ef3b2c", "#fb6a4a",
-         "#fc9272", "#fcbba1", "#fee0d2", "#fff5f0", "#ead7c0"],
-    )
+    Block height is proportional to synaptic flow (the larger of a node's total
+    incoming and outgoing edge weight), so with raw synapse-count edges the
+    blocks reflect synaptic throughput. `nodes` is indexed by diagram label and
+    must provide columns `display_layer`, `n_neurons`, `color`, `label`, and
+    `min_height`; its row order sets the top-to-bottom stacking within each
+    layer. `edges` has `pre`, `post`, `weight` already filtered to visible nodes.
+    `weight_transform`, if given, is a monotonic concave map (e.g. `np.sqrt`)
+    applied to every edge weight before sizing, to compress a wide dynamic range
+    so small nodes are not slivers and large nodes are not oversized; blocks and
+    ribbons stay mutually consistent because the same transform feeds both.
+    `explicit_y` pins individual nodes to a y position; `layer_bands` maps a
+    `display_layer` to the (y_min, y_max) band its nodes are stacked within
+    (defaults to `default_band`, or `terminal_band` for layers with explicit
+    nodes). Shared by `plot_clusters_sankey` and `plot_visual_system_sankey`.
+    """
+    explicit_y = explicit_y or {}
+    layer_bands = layer_bands or {}
+    nodes = nodes.copy()
+    if weight_transform is not None:
+        edges = edges.copy()
+        edges["weight"] = weight_transform(edges["weight"].astype(float))
 
-    def _node_color(diagram, row):
-        category = row["category"]
-        if category == "visual input" and diagram in colored_seed_df.index:
-            return colored_seed_df.loc[diagram, "color"]
-        if category == "VIN":
-            return colored_main_groups_df.loc["OL internal", "color"]
-        if category == "VPN":
-            return ol_colors.get(f"oc{int(row['cluster'])}", "#64a0d1")
-        if category == "VCBN":
-            return vcbn_colors.get(f"cc{int(row['cluster'])}", "#cb181d")
-        if category == "CB":
-            return colored_region_df.loc["CB", "color"]
-        if category == "left OL":
-            return colored_region_df.loc["left OL", "color"]
-        if category == "VNC":
-            return colored_region_df.loc["VNC", "color"]
-        return "#cccccc"
-
-    max_display_layer = max(6, int(nodes["display_layer"].max()))
+    max_display_layer = float(nodes["display_layer"].max())
+    if max_display_layer <= 0:
+        max_display_layer = 1.0
     x_lookup = {
         layer: 0.06 + float(layer) * 0.82 / max_display_layer
         for layer in sorted(nodes["display_layer"].unique())
     }
-    pos_x = [x_lookup[layer] for layer in nodes["display_layer"]]
-    pos_y = pd.Series(index=nodes.index, dtype=float)
 
-    max_nodes_per_layer = int(nodes.groupby("display_layer").size().max())
-    height = 800
-    node_pad = 18
     plot_height = max(1, height - 80)
     pad_norm = node_pad / plot_height
 
@@ -1994,14 +1889,12 @@ def plot_visual_system_sankey(
         scale_candidates.append(available / total)
     value_to_y = min(scale_candidates) if scale_candidates else 0.0
     node_height = node_value * value_to_y
-    vin_overlay_scale = 0.5
-    visible_node_height = node_height.copy()
-    vin_nodes_all = nodes.index[nodes["category"].eq("VIN")]
-    visible_node_height.loc[vin_nodes_all] = (
-        node_height.loc[vin_nodes_all] * vin_overlay_scale
-    ).clip(lower=0.025)
+    min_height = nodes["min_height"].astype(float)
+    visible_node_height = node_height.clip(lower=min_height)
 
-    def _stack_nodes(index, *, y_min=0.06, y_max=0.94):
+    pos_y = pd.Series(index=nodes.index, dtype=float)
+
+    def _stack(index, y_min, y_max):
         index = list(index)
         if not index:
             return
@@ -2011,7 +1904,6 @@ def plot_visual_system_sankey(
             )
             pos_y.loc[index[0]] = top
             return
-
         heights = visible_node_height.loc[index].astype(float)
         available = y_max - y_min
         min_gap = pad_norm * 1.05
@@ -2019,48 +1911,43 @@ def plot_visual_system_sankey(
         gap = min_gap + max(0, extra) / (len(index) - 1)
         if extra < 0:
             gap = max(0, (available - float(heights.sum())) / (len(index) - 1))
-
         y = y_min
         for diagram in index:
             pos_y.loc[diagram] = y
             y += float(visible_node_height.loc[diagram]) + gap
 
-    for _, group in nodes.groupby("display_layer", sort=False):
-        if group.index.isin(["left OL", "CB.6", "VNC"]).any():
-            final_order = [d for d in ["left OL", "CB.6", "VNC"] if d in group.index]
-            _stack_nodes(final_order, y_min=0.12, y_max=0.82)
-            leftovers = [d for d in group.index if d not in final_order]
-            _stack_nodes(leftovers, y_min=0.84, y_max=0.94)
-            continue
-
-        y_min = 0.34 if "VIN.1" in group.index else 0.02
-        _stack_nodes(group.index, y_min=y_min, y_max=0.98)
+    for layer, group in nodes.groupby("display_layer", sort=False):
+        layer_explicit = [d for d in group.index if d in explicit_y]
+        if layer_explicit:
+            for diagram in layer_explicit:
+                pos_y.loc[diagram] = explicit_y[diagram]
+            leftovers = [d for d in group.index if d not in explicit_y]
+            band = layer_bands.get(layer, terminal_band)
+            _stack(leftovers, *band)
+        else:
+            band = layer_bands.get(layer, default_band)
+            _stack(group.index, *band)
 
     pos_y = pos_y.fillna(0.5).clip(lower=0.02, upper=0.98)
-    node_colors = [_node_color(d, nodes.loc[d]) for d in diagram_names]
-    node_width = 0.012
+
     node_geom = pd.DataFrame({
-        "x0": [x_lookup[nodes.loc[d, "display_layer"]] for d in diagram_names],
-        "y0": [float(pos_y.loc[d]) for d in diagram_names],
-        "height": [float(visible_node_height.loc[d]) for d in diagram_names],
-        "color": node_colors,
-    }, index=diagram_names)
+        "x0": [x_lookup[nodes.loc[d, "display_layer"]] for d in nodes.index],
+        "y0": [float(pos_y.loc[d]) for d in nodes.index],
+        "height": [float(visible_node_height.loc[d]) for d in nodes.index],
+        "color": [nodes.loc[d, "color"] for d in nodes.index],
+    }, index=nodes.index)
     node_geom["x1"] = node_geom["x0"] + node_width
     node_geom["y1"] = node_geom["y0"] + node_geom["height"]
 
     edge_draw = edges.copy()
     edge_draw["source_width"] = edge_draw["weight"] * value_to_y
     edge_draw["target_width"] = edge_draw["weight"] * value_to_y
-    edge_draw.loc[edge_draw["pre"].map(nodes["category"]).eq("VIN"), "source_width"] *= vin_overlay_scale
-    edge_draw.loc[edge_draw["post"].map(nodes["category"]).eq("VIN"), "target_width"] *= vin_overlay_scale
-
     edge_draw["_pre_y"] = edge_draw["pre"].map(node_geom["y0"])
     edge_draw["_post_y"] = edge_draw["post"].map(node_geom["y0"])
 
     source_slots = {}
     for node, group_i in edge_draw.sort_values(["_post_y", "post"]).groupby("pre", sort=False):
-        total_width = float(group_i["source_width"].sum())
-        y = float(node_geom.loc[node, "y0"]) + max(0, float(node_geom.loc[node, "height"]) - total_width) / 2
+        y = float(node_geom.loc[node, "y0"])
         for idx, edge_i in group_i.iterrows():
             width_i = float(edge_i["source_width"])
             source_slots[idx] = (y, y + width_i)
@@ -2068,8 +1955,7 @@ def plot_visual_system_sankey(
 
     target_slots = {}
     for node, group_i in edge_draw.sort_values(["_pre_y", "pre"]).groupby("post", sort=False):
-        total_width = float(group_i["target_width"].sum())
-        y = float(node_geom.loc[node, "y0"]) + max(0, float(node_geom.loc[node, "height"]) - total_width) / 2
+        y = float(node_geom.loc[node, "y0"])
         for idx, edge_i in group_i.iterrows():
             width_i = float(edge_i["target_width"])
             target_slots[idx] = (y, y + width_i)
@@ -2091,12 +1977,12 @@ def plot_visual_system_sankey(
         fig.add_shape(
             type="path", path=path,
             xref="x", yref="y",
-            fillcolor="rgba(123, 123, 123, 0.35)",
+            fillcolor=ribbon_color,
             line=dict(width=0, color="rgba(123, 123, 123, 0)"),
             layer="below",
         )
 
-    for diagram in diagram_names:
+    for diagram in nodes.index:
         geom = node_geom.loc[diagram]
         fig.add_shape(
             type="rect",
@@ -2119,29 +2005,344 @@ def plot_visual_system_sankey(
             showlegend=False,
         ))
         if show_labels:
+            if label_side == "left":
+                label_x, label_anchor = float(geom["x0"]) - 0.004, "right"
+            else:
+                label_x, label_anchor = float(geom["x1"]) + 0.004, "left"
             fig.add_annotation(
                 xref="x", yref="y",
-                x=float(geom["x1"]) + 0.004,
+                x=label_x,
                 y=(float(geom["y0"]) + float(geom["y1"])) / 2,
-                text=diagram,
+                text=str(nodes.loc[diagram, "label"]),
                 showarrow=False,
-                xanchor="left",
+                xanchor=label_anchor,
                 yanchor="middle",
-                font=dict(size=12, color="black", family="Arial"),
+                font=dict(size=label_size, color="black", family="Arial"),
             )
 
+    margin = (
+        dict(l=120, r=30, t=40, b=40) if label_side == "left"
+        else dict(l=40, r=180, t=40, b=40)
+    )
     fig.update_layout(
-        width=1000, height=height,
-        font=dict(size=12, color="black", family="Arial"),
-        margin=dict(l=40, r=100, t=40, b=40),
+        width=width, height=height,
+        font=dict(size=label_size, color="black", family="Arial"),
+        margin=margin,
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
     fig.update_xaxes(range=[0, 1], visible=False, fixedrange=True)
     fig.update_yaxes(range=[1, 0], visible=False, fixedrange=True)
+    return fig
+
+
+def plot_clusters_sankey(
+    sankey: dict, colored_main_groups_df: pd.DataFrame,
+    colored_seed_df: pd.DataFrame, colored_region_df: pd.DataFrame,
+    *, dataset: str = DATASET, save_dir: Path | None = None,
+    filename: str | None = None, show_labels: bool = True,
+    weight_transform=None,
+):
+    """Sankey diagram of inputs → VIN/output clusters by hit_bin → CB / left OL.
+
+    Consumes the cached output of `pre.get_ol_sankey_connectivity()`. Uses the
+    shared `_render_flow_sankey` renderer so block height is proportional to
+    synaptic flow (raw synapse counts) like the full visual-system Sankey. Nodes
+    with fewer than `min_plot_neurons` neurons (per the cached `node_table`) and
+    edges at or below `weight_thre` synapses are dropped. Node labels are the VIN
+    group, output cluster (`oc{i}`), input cell type, or terminal region; CB and
+    left OL are stacked toward the vertical centre.
+    """
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "pathways"
+    conn = sankey["conn_diagram"]
+    node_table = sankey["node_table"].copy().set_index("diagram")
+    weight_thre = sankey["weight_thre"]
+    n_clu = int(sankey["n_clu"])
+    min_plot_neurons = int(sankey.get("min_plot_neurons", 20))
+
+    edges, merged_counts = _prepare_flow_sankey_edges(
+        conn, node_table, weight_thre=weight_thre, min_plot_neurons=min_plot_neurons,
+    )
+    if edges.empty:
+        raise ValueError("No OL Sankey edges remain after plotting filters.")
+
+    plotted = sorted(set(edges["pre"]) | set(edges["post"]))
+    nodes = node_table.loc[plotted].copy()
+    nodes["n_neurons"] = (
+        merged_counts.reindex(plotted).fillna(nodes["n_neurons"]).astype(int)
+    )
+
+    cluster_colors = _cluster_color_df(n_clu)["color"].to_dict()  # oc1..ocN
+
+    def _node_color(diagram, row):
+        category = row["category"]
+        if category == "visual input":
+            return (
+                colored_seed_df.loc[diagram, "color"]
+                if diagram in colored_seed_df.index else "#cccccc"
+            )
+        if category == "VIN":
+            return colored_main_groups_df.loc["VIN", "color"]
+        if category == "VPN":
+            return cluster_colors.get(f"oc{int(row['cluster'])}", "#64a0d1")
+        if category in ("CB", "left OL"):
+            return (
+                colored_region_df.loc[category, "color"]
+                if category in colored_region_df.index else "#cccccc"
+            )
+        return "#cccccc"
+
+    def _node_label(diagram, row):
+        category = row["category"]
+        if category == "VIN":
+            return "VIN"
+        if category == "VPN":
+            return f"oc{int(row['cluster'])}"
+        if category in ("CB", "left OL"):
+            return category
+        return diagram  # input cell type (e.g. L1)
+
+    nodes["color"] = [_node_color(d, nodes.loc[d]) for d in nodes.index]
+    nodes["label"] = [_node_label(d, nodes.loc[d]) for d in nodes.index]
+    nodes["min_height"] = 0.0
+
+    # top-to-bottom stacking order within each layer
+    seed_order = {
+        "L1": 0, "L2": 1, "L3": 2, "R7": 3, "R8": 4,
+        "R7d": 5, "R8d": 6, "HBeyelet": 7,
+    }
+    category_order = {
+        "visual input": 0, "VIN": 1, "VPN": 2, "CB": 3, "left OL": 4,
+    }
+
+    def _sort_key(row):
+        diagram = row.name
+        category = row["category"]
+        if category == "visual input":
+            return (category_order[category], seed_order.get(diagram, 99), 0, diagram)
+        cluster = int(row["cluster"]) if pd.notna(row["cluster"]) else 0
+        return (category_order.get(category, 99), 0, cluster, diagram)
+
+    sort_keys = nodes.apply(_sort_key, axis=1, result_type="expand")
+    nodes[["_sort_group", "_sort_seed", "_sort_cluster", "_sort_name"]] = sort_keys
+    nodes = nodes.sort_values(
+        ["display_layer", "_sort_group", "_sort_seed", "_sort_cluster", "_sort_name"],
+        kind="stable",
+    )
+
+    # stack the terminal CB / left OL nodes toward the vertical centre
+    terminal_layer = float(nodes["display_layer"].max())
+
+    fig = _render_flow_sankey(
+        nodes[["display_layer", "n_neurons", "color", "label", "min_height"]],
+        edges,
+        layer_bands={terminal_layer: (0.30, 0.70)},
+        width=1600, height=500,
+        node_pad=14, node_width=0.016,
+        show_labels=show_labels, label_size=27.5, label_side="left",
+        weight_transform=weight_transform,
+    )
+    _save(fig, save_dir, filename or f"{dataset}_sankey_pathways_w_OLL.pdf")
+    return fig
+
+
+def plot_visual_system_sankey(
+    sankey: dict, colored_main_groups_df: pd.DataFrame,
+    colored_seed_df: pd.DataFrame, colored_region_df: pd.DataFrame,
+    *, dataset: str = DATASET, save_dir: Path | None = None,
+    filename: str | None = None, show_labels: bool = True,
+    vcbn_cluster_colors: dict[str, str] | None = None,
+):
+    """Sankey diagram from visual inputs through OL/VPN and CB/VCBN groups."""
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
+    conn = sankey["conn_diagram"]
+    node_table = sankey["node_table"].copy().set_index("diagram")
+    weight_thre = sankey["weight_thre"]
+
+    min_plot_neurons = int(sankey.get("min_plot_neurons", 120))
+    edges, merged_counts = _prepare_flow_sankey_edges(
+        conn, node_table, weight_thre=weight_thre, min_plot_neurons=min_plot_neurons,
+    )
+    if edges.empty:
+        raise ValueError("No Sankey edges remain after plotting filters.")
+
+    plotted = sorted(set(edges["pre"]) | set(edges["post"]))
+    nodes = node_table.loc[plotted].copy()
+    nodes["n_neurons"] = (
+        merged_counts.reindex(plotted).fillna(nodes["n_neurons"]).astype(int)
+    )
+    final_layer_mask = nodes["category"].isin(["left OL", "VNC"])
+    nodes.loc[final_layer_mask, "display_layer"] = 6.5
+    seed_order = {
+        "L1": 0, "L2": 1, "L3": 2, "R7": 3, "R8": 4,
+        "R7d": 5, "R8d": 6, "HBeyelet": 7,
+    }
+    category_order = {
+        "visual input": 0, "VIN": 1, "CB": 2, "VPN": 3,
+        "VCBN": 4, "left OL": 5, "VNC": 6,
+    }
+
+    def _sort_key(row):
+        diagram = row.name
+        category = row["category"]
+        if category == "visual input":
+            return (category_order[category], seed_order.get(diagram, 99), diagram)
+        cluster = row["cluster"]
+        cluster = int(cluster) if pd.notna(cluster) else 0
+        return (category_order.get(category, 99), cluster, diagram)
+
+    sort_keys = nodes.apply(_sort_key, axis=1, result_type="expand")
+    nodes[["_sort_group", "_sort_cluster", "_sort_name"]] = sort_keys
+    nodes = nodes.sort_values(
+        ["display_layer", "_sort_group", "_sort_cluster", "_sort_name"],
+        kind="stable",
+    )
+
+    def _cluster_palette(prefix: str, n_clu: int, colors: list[str]) -> dict[str, str]:
+        if n_clu <= len(colors):
+            palette = colors[:n_clu]
+        else:
+            palette = (colors * ((n_clu // len(colors)) + 1))[:n_clu]
+        return {f"{prefix}{i + 1}": color for i, color in enumerate(palette)}
+
+    n_ol_clu = max(int(sankey.get("n_ol_clu", 1)), 1)
+    n_cb_clu = max(int(sankey.get("n_cb_clu", 1)), 1)
+    ol_colors = _cluster_palette("oc", n_ol_clu, _CLUSTER_BLUES)
+    vcbn_cluster_colors = vcbn_cluster_colors or _VCBN_CC_TO_OC
+    vcbn_colors = {}
+    for cluster_name, color in vcbn_cluster_colors.items():
+        vcbn_colors[cluster_name] = ol_colors.get(color, color)
+
+    def _node_color(diagram, row):
+        category = row["category"]
+        if category == "visual input" and diagram in colored_seed_df.index:
+            return colored_seed_df.loc[diagram, "color"]
+        if category == "VIN":
+            return colored_main_groups_df.loc["VIN", "color"]
+        if category == "VPN":
+            return ol_colors.get(f"oc{int(row['cluster'])}", "#64a0d1")
+        if category == "VCBN":
+            return vcbn_colors.get(f"cc{int(row['cluster'])}", "#cb181d")
+        if category == "CB":
+            return colored_region_df.loc["CB", "color"]
+        if category == "left OL":
+            return colored_region_df.loc["left OL", "color"]
+        if category == "VNC":
+            return colored_region_df.loc["VNC", "color"]
+        return "#cccccc"
+
+    nodes["color"] = [_node_color(d, nodes.loc[d]) for d in nodes.index]
+    nodes["label"] = [d.split(".")[0] for d in nodes.index]
+    nodes["min_height"] = np.where(nodes["category"].eq("VIN"), 0.025, 0.0)
+    explicit_y = {
+        k: v for k, v in {"CB.6": 0.02, "left OL": 0.42, "VNC": 0.72}.items()
+        if k in nodes.index
+    }
+
+    fig = _render_flow_sankey(
+        nodes[["display_layer", "n_neurons", "color", "label", "min_height"]],
+        edges,
+        explicit_y=explicit_y,
+        terminal_band=(0.84, 0.94),
+        default_band=(0.02, 0.98),
+        width=2080, height=672,
+        node_pad=18, node_width=0.012,
+        show_labels=show_labels, label_size=24, label_side="left",
+    )
     out_name = filename or f"{dataset}_visual_system_sankey.pdf"
     _save(fig, save_dir, out_name)
     return fig
+
+
+def plot_vcn_input_pie(
+    sankey: dict, meta: pd.DataFrame, prop,
+    colored_region_df: pd.DataFrame, colored_main_groups_df: pd.DataFrame,
+    *, side_char: str = SIDE_CHAR, min_pct: float = 1.0,
+    dataset: str = DATASET, save_dir: Path | None = None,
+    filename: str | None = None,
+):
+    """Pie of total synapses into <side> VCNs, split by presynaptic category.
+
+    Uses the same neuron categorization that builds the Main Fig. 6a Sankey
+    (`sankey` = output of `cb_data.get_visual_system_sankey_connectivity`): VIN,
+    VPN clusters ``oc*``, VCBN clusters ``cc*``, and non-visual CB. Edge weights
+    are raw synapse counts from the full `prop` matrix onto VCN cell types that
+    project into the chosen optic lobe (``main_groups == "VCN"`` &
+    ``region == "<side> OL"``). Colours match the 6a Sankey. Slices below
+    ``min_pct`` percent of the total are dropped and the remainder renormalised.
+
+    Returns ``(fig, breakdown_df)``; ``breakdown_df`` lists every category with
+    its synapse count and full-total percentage (including dropped ones).
+    """
+    import scipy.sparse as sp
+
+    meta_sub = sankey["meta_sub"]
+    n_ol_clu, n_cb_clu = int(sankey["n_ol_clu"]), int(sankey["n_cb_clu"])
+
+    def _category_column(category, cluster):
+        if category == "VIN":
+            return "VIN"
+        if category == "VPN":
+            return f"oc{int(cluster)}"
+        if category == "VCBN":
+            return f"cc{int(cluster)}"
+        if category == "CB":
+            return "non-visual CB"
+        return None
+
+    cols = [
+        _category_column(c, k)
+        for c, k in zip(meta_sub["category"], meta_sub["cluster"])
+    ]
+    ms = meta_sub.assign(_col=cols).dropna(subset=["_col"])
+    col_order = (
+        ["VIN"]
+        + [f"oc{i}" for i in range(1, n_ol_clu + 1)]
+        + [f"cc{i}" for i in range(1, n_cb_clu + 1)]
+        + ["non-visual CB"]
+    )
+    col_to_row = {c: i for i, c in enumerate(col_order)}
+    indicator = sp.coo_matrix(
+        (np.ones(len(ms)), (ms["_col"].map(col_to_row).values, ms["idx"].values)),
+        shape=(len(col_order), prop.shape[0]),
+    ).tocsr()
+
+    side_word = _SIDE_WORD[side_char]
+    post_idx = meta[
+        (meta["main_groups"] == "VCN") & (meta["region"] == f"{side_word} OL")
+    ]["idx"].values
+    synapses = np.asarray((indicator @ prop[:, post_idx]).sum(axis=1)).ravel()
+
+    breakdown = pd.DataFrame({"category": col_order, "synapses": synapses})
+    breakdown["pct"] = 100 * breakdown["synapses"] / breakdown["synapses"].sum()
+
+    # Colours matched to plot_visual_system_sankey: VIN main-group pink, VPN/VCBN
+    # clusters share the OL cluster blues (cc via the _VCBN_CC_TO_OC key), CB grey.
+    oc_colors = _cluster_color_df(n_ol_clu)["color"].to_dict()
+    cmap = {"VIN": colored_main_groups_df.loc["VIN", "color"]}
+    cmap.update({f"oc{i}": oc_colors[f"oc{i}"] for i in range(1, n_ol_clu + 1)})
+    cmap.update({
+        cc: oc_colors.get(oc, "#cb181d")
+        for cc, oc in _VCBN_CC_TO_OC.items() if cc in col_to_row
+    })
+    cmap["non-visual CB"] = colored_region_df.loc["CB", "color"]
+
+    plot_df = breakdown[breakdown["pct"] >= min_pct].copy()
+    plot_order = [c for c in col_order if c in set(plot_df["category"])]
+
+    fig = px.pie(
+        plot_df, values="synapses", names="category", color="category",
+        color_discrete_map=cmap, category_orders={"category": plot_order},
+        title=f"Synapses into {side_word} VCNs by presynaptic category (>={min_pct:g}%)",
+    )
+    fig.update_traces(sort=False, textposition="inside", texttemplate="%{percent:.0%}")
+    fig.update_layout(
+        width=720, height=520, plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(family="arial", size=14),
+    )
+    out_name = filename or f"{dataset}_vcn_{side_char}_input_pie.pdf"
+    _save(fig, save_dir, out_name, html=True)
+    return fig, breakdown
 
 
 def _save_graph_html(g, layout, vertex_colors, vertex_size, out_path: Path) -> None:
@@ -2211,7 +2412,7 @@ def plot_clusters_graph(
         ol_meta[["instance", "main_groups", "sign"]].drop_duplicates(),
         on="instance", how="left",
     )
-    base = base[base.main_groups.isin(["visual input", "OL internal"])].reset_index(drop=True)
+    base = base[base.main_groups.isin(["visual input", "VIN"])].reset_index(drop=True)
     long = base.melt(
         id_vars=["instance", "main_groups", "sign"],
         value_vars=cluster_names_c, var_name="post", value_name="weight",
@@ -2262,7 +2463,7 @@ def plot_clusters_graph(
     plt.close(fig)
     _save_graph_html(
         g, layout, vertex_colors, vertex_size,
-        HTML_FIG_DIR / out.with_suffix(".html").name,
+        out.with_suffix(".html"),
     )
     return out
 
@@ -2275,11 +2476,14 @@ def plot_clusters_graph(
 def plot_lr_clustering_sweep(
     sweep_df: pd.DataFrame, n0: int, *,
     dataset: str = DATASET, save_dir: Path | None = None,
+    diag_font_size: int | None = None,
 ):
     """Six line/scatter PDFs for the L/R clustering threshold sweep.
 
     `n0` is the reference cluster count (from the chosen FRAC in section 3);
-    used to draw dashed reference lines on each panel.
+    used to draw dashed reference lines on each panel. `diag_font_size`, if set,
+    overrides the font of the `clustering_threshold_diag` panel only (SI 3g);
+    the other panels (incl. SI 3d/3f) keep the default size.
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "clustering"
     idx0 = int(np.where(sweep_df["n_clu_R"].values == n0)[0][0])
@@ -2303,6 +2507,8 @@ def plot_lr_clustering_sweep(
     )
     fig.update_xaxes(type="log", tickformat="d", dtick=1, range=[0.2, 2])
     fig.update_yaxes(tickvals=[0, 0.5, 1], range=[0, 1])
+    if diag_font_size is not None:
+        fig.update_layout(font=dict(family="arial", size=diag_font_size))
     figs.append((fig, f"{dataset}_clustering_threshold_diag.pdf"))
 
     # panel 3: n_L vs n_R
@@ -2428,7 +2634,7 @@ def plot_polarity_stacked_bars(
     labels = [
         f"<b>{_POLARITY_DISPLAY_RENAMES.get(t, t)}</b>" if p == "OFF"
         else _POLARITY_DISPLAY_RENAMES.get(t, t)
-        for t, p in zip(order, comparison["polarity"].values)
+        for t, p in zip(order, comparison["Contrast selectivity"].values)
     ]
     fig.update_xaxes(
         categoryorder="array", categoryarray=order,
@@ -2459,7 +2665,7 @@ def plot_rf_example(
     *, dataset: str = DATASET, save_dir: Path | None = None,
     per_input_threshold: float = 0.2,
 ):
-    """Three figures for one example OL output neuron:
+    """Three figures for one example VPN neuron:
     (1) original effective-weight hex RF,
     (2) fitted 2D-Gaussian RF + overlay,
     (3) per-visual-input hex RFs for inputs above `per_input_threshold * tot_max`.
@@ -2718,7 +2924,7 @@ def plot_rf_scatters_by_main_groups(
     stars_sign = list(star_types_output) if star_types_output is not None else [s + "_R" for s in _RF_STAR_OUTPUT]
 
     sub = params_type_df[
-        params_type_df["main_groups"].isin(["OL internal", "OL output", "CB input"])
+        params_type_df["main_groups"].isin(["VIN", "VPN", "VCN"])
     ].copy()
     figs = []
 
@@ -2738,9 +2944,13 @@ def plot_rf_scatters_by_main_groups(
              ("hitting_time", "amp"), ("frac_ff", "amp"),
              ("r2", "size"), ("phi", "size"), ("VIC", "size")]
     for xv, yv in pairs:
+        # r2_vs_size is reproduced at the larger exp-comparison panel size
+        # (600x600; font stays 18 as elsewhere) to match exp_*_comp.pdf.
+        big = (xv, yv) == ("r2", "size")
         fig = _scatter(
             sub, xv, yv, "main_groups", "instance",
             colored_main_groups_df, stars_mg,
+            height=600 if big else 400, width=600 if big else 400,
         )
         fig.update_layout(yaxis_title=f"ARF {yv}", xaxis_title=f"ARF {xv}")
         if xv == "hitting_time":
@@ -2796,7 +3006,7 @@ def plot_rf_scatters_by_cluster(
     jitter: float = 0.2,
 ):
     """Per-instance RF params jittered against cluster index. Two panels:
-    OL-output types (by `idxmax` cluster) and OL-internal types (filtered to
+    VPN types (by `idxmax` cluster) and VIN types (filtered to
     max-participation > 0.4)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
     n_clu = len(cluster_names)
@@ -2817,9 +3027,9 @@ def plot_rf_scatters_by_cluster(
     figs = []
     rng = np.random.default_rng(0)
 
-    # OL output: y = cluster
+    # VPN: y = cluster
     out = (
-        params_type_df[params_type_df["main_groups"] == "OL output"]
+        params_type_df[params_type_df["main_groups"] == "VPN"]
         .merge(in_out_instance_df[["instance", "idxmax"]], how="inner", on="instance")
     )
     out["cluster_name"] = "o" + out["idxmax"]
@@ -2850,9 +3060,9 @@ def plot_rf_scatters_by_cluster(
             fig.update_xaxes(range=[-0.1, 1.1])
         figs.append((fig, f"{dataset}_examples_pathway_vs_{val}_output.pdf"))
 
-    # OL internal: x = cluster
+    # VIN: x = cluster
     inside = (
-        params_type_df[params_type_df["main_groups"] == "OL internal"]
+        params_type_df[params_type_df["main_groups"] == "VIN"]
         .merge(in_out_instance_df, how="left", on="instance")
     )
     inside = inside[inside["max"] > 0.4].dropna(subset=["size"]).reset_index(drop=True)
@@ -2906,7 +3116,7 @@ def plot_rf_histograms(
 
     size_bins = 2 ** np.linspace(np.log2(0.6), np.log2(350), 12)
     base = params_type_df[
-        params_type_df["main_groups"].isin(["OL internal", "OL output", "CB input"])
+        params_type_df["main_groups"].isin(["VIN", "VPN", "VCN"])
     ].copy()
 
     cmaps = {"main_groups": colored_main_groups_df, "sign": colored_sign_df}
@@ -2925,9 +3135,9 @@ def plot_rf_histograms(
                          range=[np.log10(0.6), np.log10(350)])
         figs.append((fig, f"{dataset}_hist_rf_size_{grp}_types.pdf"))
 
-    # cumsum by cluster (OL output)
+    # cumsum by cluster (VPN)
     out = (
-        params_type_df[params_type_df["main_groups"] == "OL output"]
+        params_type_df[params_type_df["main_groups"] == "VPN"]
         .merge(in_out_instance_df[["instance", "idxmax"]], how="inner", on="instance")
     )
     out["cluster_name"] = out["idxmax"]
@@ -3000,12 +3210,12 @@ def plot_rf_sizediff_internal(
     conn_edges: pd.DataFrame, colored_main_groups_df: pd.DataFrame,
     *, dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Histogram of `size_diff` weighted by weight for OL internal →
-    (OL internal, OL output) edges. Needs only OL RFs (step 6a)."""
+    """Histogram of `size_diff` weighted by weight for VIN →
+    (VIN, VPN) edges. Needs only OL RFs (step 6a)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
     d = _bin_size_diff(conn_edges[
-        (conn_edges["main_groups_pre"] == "OL internal")
-        & conn_edges["main_groups_post"].isin(["OL internal", "OL output"])
+        (conn_edges["main_groups_pre"] == "VIN")
+        & conn_edges["main_groups_post"].isin(["VIN", "VPN"])
     ])
     fig = _hist_sum_lines(d, "val", "weight", "main_groups_post",
                           _SIZE_DIFF_BINS, colored_main_groups_df,
@@ -3025,12 +3235,12 @@ def plot_rf_sizediff_output(
     conn_edges: pd.DataFrame, colored_region_df: pd.DataFrame,
     *, dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Histogram of `size_diff` weighted by weight for OL output →
+    """Histogram of `size_diff` weighted by weight for VPN →
     (right OL, CB) edges. Needs CB RFs (step 8) for the CB-post curve;
     otherwise only the right-OL line appears."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
     d = _bin_size_diff(conn_edges[
-        (conn_edges["main_groups_pre"] == "OL output")
+        (conn_edges["main_groups_pre"] == "VPN")
         & conn_edges["region_post"].isin(["right OL", "CB"])
     ])
     if d.empty:
@@ -3061,7 +3271,7 @@ def plot_rf_connectivity_histograms(
     region_df = (
         colored_region_df if colored_region_df is not None
         else pd.DataFrame(
-            [colored_main_groups_df.loc["OL output", "color"]],
+            [colored_main_groups_df.loc["VPN", "color"]],
             index=["right OL"], columns=["color"],
         )
     )
@@ -3079,7 +3289,7 @@ def plot_rf_connectivity_boxes(
     *, dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """Size-diff binned (log2 after +2 shift) × layer-diff box plots, colored
-    by main_groups_pre and by sign_pre. Only OL-internal + OL-output pres
+    by main_groups_pre and by sign_pre. Only VIN + VPN pres
     with aggregated weight > 5."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
     df = conn_edges.copy()
@@ -3092,7 +3302,7 @@ def plot_rf_connectivity_boxes(
     df = df.groupby(
         ["instance_pre", "instance_post", "main_groups_pre", "sign_pre"], dropna=False,
     ).agg({"layer_diff": "median", "col_bin_diff": "median", "weight": "median"}).reset_index()
-    df = df[df["main_groups_pre"].isin(["OL internal", "OL output"]) & (df["weight"] > 5)]
+    df = df[df["main_groups_pre"].isin(["VIN", "VPN"]) & (df["weight"] > 5)]
 
     figs = []
     color_val = {"main_groups_pre": colored_main_groups_df, "sign_pre": colored_sign_df}
@@ -3189,7 +3399,7 @@ def plot_rf_size_type_scatters(
     cell 12."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     stars = list(star_types) if star_types is not None else [s + "_R" for s in _RF_STAR_OUTPUT]
-    sub = comparison_type[comparison_type["main_groups"].isin(["OL internal", "OL output"])].copy()
+    sub = comparison_type[comparison_type["main_groups"].isin(["VIN", "VPN"])].copy()
     figs = []
     for val in ["size", "n_col", "r2", "ecc", "phi"]:
         fig = _scatter(
@@ -3344,14 +3554,92 @@ def plot_rf_size_vs_experiment(
 
 
 # %%
+def plot_rf_aspect_vs_experiment(
+    comparison_type: pd.DataFrame, exp_sizes: pd.DataFrame,
+    colored_main_groups_df: pd.DataFrame, colored_region_df: pd.DataFrame,
+    *, dataset: str = DATASET, save_dir: Path | None = None,
+    dev: float = 0.2,
+):
+    """Measured vs predicted RF aspect ratio (sy/sx), analogous to
+    `plot_rf_size_vs_experiment` (Main Fig. 3e) but for the same cell types'
+    elongation rather than area. Prediction is the propagated ARF only.
+
+    The sy/sx ratio is scale-free, so the column->degree axis conversion
+    cancels and is irrelevant. Cell types whose measured *or* predicted ratio
+    deviates from 1.0 by more than `dev` are highlighted (solid marker) and
+    labelled; the rest stay faint and unlabelled. Hovering shows the cell type.
+
+    Writes an HTML sidecar to `save_dir` (default the exp_comparison topic
+    folder, so `paper_figs.distribute()` can rename it to the panel file) and
+    returns the figure so a caller (e.g. a notebook) can also export a PDF.
+    """
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
+    mixed = _mixed_color_df(colored_main_groups_df, colored_region_df)
+    instances_comp = [s + "_R" for s in exp_sizes["cell_type"].values]
+
+    prop = comparison_type[[
+        "instance", "cell_type_prop", "main_groups", "sx_prop", "sy_prop",
+    ]].copy().rename(columns={"cell_type_prop": "cell_type"})
+    sub = prop[prop["instance"].isin(instances_comp)].copy()
+    sub = sub.merge(
+        exp_sizes[["cell_type", "sx", "sy"]].rename(
+            columns={"sx": "sx_exp", "sy": "sy_exp"},
+        ),
+        on="cell_type", how="left",
+    )
+    sub["ratio_exp"] = sub["sy_exp"] / sub["sx_exp"]
+    sub["ratio_pred"] = sub["sy_prop"] / sub["sx_prop"]
+    plot_df = sub.dropna(subset=["ratio_exp", "ratio_pred"]).copy()
+    plot_df["cell_type_label"] = plot_df["instance"].str.replace(
+        "_R", "", regex=False
+    )
+
+    deviates = (
+        (plot_df["ratio_exp"] - 1.0).abs() > dev
+    ) | (
+        (plot_df["ratio_pred"] - 1.0).abs() > dev
+    )
+    labelled = list(plot_df.loc[deviates, "cell_type_label"].values)
+
+    rng = (np.log10(0.4), np.log10(2.0))
+    fig = _scatter(plot_df, "ratio_exp", "ratio_pred", "main_groups",
+                   "cell_type_label", mixed, t_stars=labelled,
+                   height=600, width=600, size=12)
+    fig.add_trace(go.Scatter(
+        x=[10 ** rng[0], 10 ** rng[1]], y=[10 ** rng[0], 10 ** rng[1]],
+        mode="lines", line=dict(color="gray", width=2, dash="dash"),
+        showlegend=False, hoverinfo="skip",
+    ))
+    for sel in (dict(mode="markers"), dict(mode="markers+text")):
+        fig.update_traces(
+            hovertemplate="%{text}<extra></extra>", selector=sel,
+        )
+    fig.update_layout(
+        xaxis_title="measured sy/sx", yaxis_title="predicted sy/sx",
+        xaxis_title_standoff=0, yaxis_title_standoff=2,
+        font=dict(family="arial", size=27),  # 50% larger than the _scatter default (18)
+    )
+    ticks = [0.5, 0.7, 1.0, 1.5, 2.0]
+    tick_text = ["0.5", "0.7", "1", "1.5", "2"]
+    fig.update_xaxes(type="log", tickvals=ticks, ticktext=tick_text, range=list(rng))
+    fig.update_yaxes(type="log", tickvals=ticks, ticktext=tick_text, range=list(rng))
+
+    stem = f"{dataset}_exp_aspect_comp"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    fig.write_html(save_dir / f"{stem}.html")
+    return fig
+
+
+# %%
 def plot_rf_size_vs_experiment_cc(
     type_ol: pd.DataFrame, cc_sizes: pd.DataFrame,
     colored_main_groups_df: pd.DataFrame, colored_region_df: pd.DataFrame,
     *, dataset: str = DATASET, save_dir: Path | None = None,
     col_to_deg_size: float = 25.0,
 ):
-    """CurrierClandinin experimental vs propagated RF size (center vs ellipse).
-    Legacy cell 23."""
+    """CurrierClandinin experimental (ellipse-area) vs propagated RF size.
+    Legacy cell 23. The CC sheet no longer carries a separate `size_center`
+    measure (only `size_ellipse`), so a single ellipse-area series is plotted."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     mixed = _mixed_color_df(colored_main_groups_df, colored_region_df)
 
@@ -3368,31 +3656,16 @@ def plot_rf_size_vs_experiment_cc(
     ], axis=0, ignore_index=True)
     prop["size_pred_deg"] = prop["size"] * col_to_deg_size
 
-    sub = cc_sizes[["cell_type", "size_center", "size_ellipse"]].merge(
+    sub = cc_sizes[["cell_type", "size_ellipse"]].merge(
         prop, on="cell_type", how="left",
     )
 
-    center_df = sub.dropna(subset=["size_center", "size_pred_deg"])
-    fig = _scatter(center_df, "size_center", "size_pred_deg",
-                   "main_groups", "instance", mixed,
-                   list(center_df["instance"].values),
-                   height=600, width=600, size=12)
-    _add_2x_guide_lines(fig, 5, 1000)
-    for _, r in sub.dropna(subset=["size_center", "size_ellipse", "size_pred_deg"]).iterrows():
-        fig.add_trace(go.Scatter(
-            x=[r["size_center"], r["size_ellipse"]],
-            y=[r["size_pred_deg"], r["size_pred_deg"]],
-            mode="lines", line=dict(color="black", width=0.5),
-            showlegend=False, hoverinfo="skip",
-        ))
     ellipse_df = sub.dropna(subset=["size_ellipse", "size_pred_deg"])
-    fig2 = _scatter(ellipse_df, "size_ellipse", "size_pred_deg",
-                    "main_groups", "instance", mixed,
-                    list(ellipse_df["instance"].values),
-                    height=600, width=600, marker="square", size=12,
-                    show_labels=False)
-    for tr in fig2.data:
-        fig.add_trace(tr)
+    fig = _scatter(ellipse_df, "size_ellipse", "size_pred_deg",
+                   "main_groups", "instance", mixed,
+                   list(ellipse_df["instance"].values),
+                   height=600, width=600, marker="square", size=12)
+    _add_2x_guide_lines(fig, 5, 1000)
     fig.update_layout(
         xaxis_title="measured RF size (deg²) [CC]",
         yaxis_title="predicted ARF size (deg²)",
@@ -3458,29 +3731,19 @@ def plot_vic_vs_layer_scatter(
     vic_type: pd.DataFrame, colored_region_df: pd.DataFrame,
     *, vic_thre: float = 5e-4, dataset: str = DATASET,
     save_dir: Path | None = None, highlight: list[str] | None = None,
-    matched_instances: list[str] | None = None,
     show_highlight_labels: bool = True,
 ):
     """Scatter of VIC vs hitting_time (layer), one point per instance, colored
-    by region. Optional `highlight` and `matched_instances` lists for labeled
-    callouts (legacy nb 8 cells 41-42)."""
+    by region. Optional `highlight` list for labeled callouts (legacy nb 8
+    cells 41-42)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     highlight = list(highlight) if highlight is not None else []
-    matched_instances = list(matched_instances) if matched_instances is not None else []
 
     fig = _scatter(
         vic_type, "hitting_time", "VIC", "region", "instance",
         colored_region_df, highlight, show_labels=show_highlight_labels,
     )
     fig.add_hline(y=vic_thre, line_dash="dash", line_color="gray")
-    if matched_instances:
-        matched = vic_type[vic_type["instance"].isin(matched_instances)]
-        fig2 = _scatter(
-            matched, "hitting_time", "VIC", "region", "instance",
-            colored_region_df, matched_instances, show_labels=show_highlight_labels,
-        )
-        for tr in fig2.data:
-            fig.add_trace(tr)
     fig.update_yaxes(type="log", range=[np.log10(2e-7), np.log10(0.8)])
     fig.update_xaxes(range=[0.5, 6], tickvals=[1, 2, 3, 4, 5, 6])
     fig.update_layout(xaxis_title="layer")
@@ -3499,12 +3762,12 @@ def plot_vic_vs_layer_scatter(
 # example stacked bar keeps the same left-to-right layout.
 _CB_CLUSTER_TYPES = {
     "r": [
-        "pC1_2a_R", "DNg02_a_R", "IbSpsP_0", "TuBu08_R", "SMP228_R",
-        "ER4d_R", "PVLP112_R", "PVLP113_R", "DNp02_R", "pC1_5b_R",
+        "pC1_2a_R", "LAL094_R", "IbSpsP_0", "LHPV5b3_R", "TuBu08_R",
+        "SMP228_R", "ER4d_R", "DNp02_R", "pC1_5b_R", "DNg02_a_R",
     ],
     "l": [
-        "pC1_2a_L", "DNg02_a_L", "IbSpsP_0", "TuBu08_L", "SMP228_L",
-        "ER4d_L", "PVLP112_L", "PVLP113_L", "DNp02_L", "pC1_5b_L",
+        "pC1_2a_L", "LAL094_L", "IbSpsP_0", "LHPV5b3_L", "TuBu08_L",
+        "SMP228_L", "ER4d_L", "DNp02_L", "pC1_5b_L", "DNg02_a_L",
     ],
 }
 
@@ -3586,12 +3849,16 @@ def plot_cb_clusters_example_features(
     (legacy nb 8 cell 56). `cluster_types` are full instance names (with
     side suffix) from `_CB_CLUSTER_TYPES` — L/R mix allowed."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
-    keep = [t for t in cluster_types if t in feature_df.index]
-    sub = feature_df.loc[keep, in_instances]
-    plot_df = sub / sub.sum(1).values[:, np.newaxis]
+    # Keep every requested type as an x-axis slot, in the given order. A type
+    # absent from the feature matrix (e.g. a VCBN whose VIC is below threshold
+    # on this side, like pC1_5b on the left) becomes an all-NaN row and renders
+    # as a blank bar instead of vanishing from the plot.
+    sub = feature_df.reindex(list(cluster_types))[in_instances]
+    plot_df = sub.div(sub.sum(1).replace(0, np.nan), axis=0)
     plot_df.columns = [s[:-2] for s in plot_df.columns]
     plot_df.index.name = None
-    plot_df = plot_df.stack(0).reset_index(name="effective weight").rename(
+    # dropna=False keeps the all-NaN row so its category stays on the axis.
+    plot_df = plot_df.stack(0, dropna=False).reset_index(name="effective weight").rename(
         columns={"level_0": "out type", "level_1": "in type"}
     )
     fig = _stacked_bars(
@@ -3600,7 +3867,7 @@ def plot_cb_clusters_example_features(
         xrot=-45, height=450, width=550,
     )
     fig.update_layout(xaxis_title_standoff=0, yaxis_title_standoff=2)
-    _save(fig, save_dir, f"{dataset}{side_str}_cb_in_out_examples.pdf")
+    _save(fig, save_dir, f"{dataset}{side_str}_cb_in_out_examples.pdf", html=True)
     return fig
 
 
@@ -3637,7 +3904,7 @@ def plot_cb_clusters_pathway_features(
         xaxis_title_standoff=0, yaxis_title_standoff=2,
         font=dict(family="arial", size=16),
     )
-    _save(fig, save_dir, f"{dataset}{side_str}_cb_in_out_pathways.pdf")
+    _save(fig, save_dir, f"{dataset}{side_str}_cb_in_out_pathways.pdf", html=True)
     return fig
 
 
@@ -3698,10 +3965,10 @@ def plot_ol_cb_cluster_connectivity(
     norm_out = total.div(row_sum, axis=0)
 
     fig_in = _one(norm_in, total,
-                  "input-normalised connectivity from OL output clusters to CB clusters",
+                  "input-normalised connectivity from VPN clusters to CB clusters",
                   "cb_clusters_in")
     fig_out = _one(norm_out, total,
-                   "output-normalised connectivity from OL output clusters to CB clusters",
+                   "output-normalised connectivity from VPN clusters to CB clusters",
                    "cb_clusters_out")
     return fig_in, fig_out
 
@@ -3768,7 +4035,7 @@ def plot_cb_clusters_rois(
                      mirror=True, tickangle=-90, title_standoff=0)
     fig.update_yaxes(showline=True, linewidth=1, linecolor="black",
                      mirror=True, autorange="reversed", title_standoff=2)
-    _save(fig, save_dir, f"{dataset}{side_str}_cb_clusters_rois.pdf")
+    _save(fig, save_dir, f"{dataset}{side_str}_cb_clusters_rois.pdf", html=True)
     return fig
 
 
@@ -3778,13 +4045,13 @@ def plot_cb_participation_n_clu_out(
     side_char: str = SIDE_CHAR, dataset: str = DATASET,
     side_str: str = "", save_dir: Path | None = None,
 ):
-    """Histogram of n_clusters (CB clusters with pi > 1/N) for OL-output
+    """Histogram of n_clusters (CB clusters with pi > 1/N) for VPN
     cell types. Legacy nb 8 c 88, filename `…_in_out_n_clu_participation_out.pdf`."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     side_word = _SIDE_WORD[side_char] if side_char in _SIDE_WORD else "right"
     sub = type_part_cb[
         type_part_cb["region"].isin([f"{side_word} OL"])
-        & (type_part_cb["main_groups"] == "OL output")
+        & (type_part_cb["main_groups"] == "VPN")
     ]
     cluster_names = [c for c in type_part_cb.columns if bool(re.match(r"^c\d+$", str(c)))]
     n_clu = len(cluster_names)
@@ -3808,7 +4075,7 @@ def plot_cb_clusters_graph(
     save_dir: Path | None = None, edge_color: str = "lightgray",
     ol_highlight: list[str] | None = None,
 ):
-    """igraph network of OL-output types + CB clusters, edges are
+    """igraph network of VPN types + CB clusters, edges are
     participation ≥ 1/N. Legacy nb 8 c 99."""
     import igraph as ig
     import matplotlib.pyplot as plt
@@ -3819,7 +4086,7 @@ def plot_cb_clusters_graph(
     cluster_names_no_c = [s[1:] for s in cluster_names_c]
     n_clu = len(cluster_names_c)
 
-    base = type_part_cb[type_part_cb["main_groups"] == "OL output"].copy()
+    base = type_part_cb[type_part_cb["main_groups"] == "VPN"].copy()
     long = base.melt(
         id_vars=["instance"], value_vars=cluster_names_c,
         var_name="post", value_name="weight",
@@ -3838,7 +4105,7 @@ def plot_cb_clusters_graph(
     g.vs["name"] = nodes
     g.es["weight"] = long["weight"].tolist()
 
-    # Color: CB cluster nodes share the CB region gray; OL-output cell types
+    # Color: CB cluster nodes share the CB region gray; VPN cell types
     # keep the per-cluster blue gradient.
     cb_gray = colored_region_df.loc["CB", "color"]
     cluster_to_color = {str(i + 1): cb_gray for i in range(n_clu)}
@@ -3878,7 +4145,7 @@ def plot_cb_clusters_graph(
     plt.close(fig)
     _save_graph_html(
         g, layout, vertex_colors, vertex_size,
-        HTML_FIG_DIR / out.with_suffix(".html").name,
+        out.with_suffix(".html"),
     )
     return out
 
@@ -3889,7 +4156,7 @@ def plot_out_cb_highres_sub(
     thre_row: float = 1.0, thre_col: float = 0.8, thre_row2: float = 0.5,
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Subset of OL-output × CB-type high-res effective-weight heatmap,
+    """Subset of VPN × CB-type high-res effective-weight heatmap,
     filtered by row/col/row2 score thresholds. Legacy nb 10 cells 44-53."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     out_score = tb_clu_df.sum(1)
@@ -3908,7 +4175,7 @@ def plot_out_cb_highres_sub(
     ))
     fig.update_layout(
         font=dict(family="arial", size=16),
-        title="rel effective weight from OL output to high-res. CB cell types (major only)",
+        title="rel effective weight from VPN to high-res. CB cell types (major only)",
         xaxis_title="high-resolution VCBN types (size in col)",
         yaxis_title="high-resolution VPN types (size in col)",
         xaxis_tickvals=list(range(sub.shape[1])), xaxis_ticktext=xtt,
@@ -4002,19 +4269,19 @@ def plot_cb_layer_hist_left(
     colored_main_groups_df: pd.DataFrame, *,
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Horizontal histogram of left-side hitting time for OL output + CB
+    """Horizontal histogram of left-side hitting time for VPN + CB
     instances (legacy nb 9 cell 21)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     cmap = colored_region_df.copy()
-    cmap.loc["OL output", "color"] = colored_main_groups_df.loc["OL output", "color"]
+    cmap.loc["VPN", "color"] = colored_main_groups_df.loc["VPN", "color"]
     df = layer_lr_df.copy()
     id_col = "instance" if "instance" in df.columns else "cell_type"
     df = df[~df[id_col].str.contains("_unclear", regex=False)]
     ol = df[
         df["region"].isin(["left OL", "right OL"])
-        & (df["main_groups"] == "OL output")
+        & (df["main_groups"] == "VPN")
     ].copy()
-    ol["region"] = "OL output"
+    ol["region"] = "VPN"
     cb = df[df["region"] == "CB"]
     plot_df = pd.concat([ol, cb], axis=0, ignore_index=True)
 
@@ -4032,26 +4299,31 @@ def plot_cb_layer_hist_left(
 def plot_cb_clusters_size_vs_cluster(
     cb_cluster_df: pd.DataFrame, cb_type_df: pd.DataFrame,
     colored_region_df: pd.DataFrame, *,
+    size_col: str = "size", size_lo: float = 4.5, size_hi: float = 250,
+    size_tickvals: tuple[float, ...] = (5, 10, 50, 100),
     dataset: str = DATASET, save_dir: Path | None = None, jitter: float = 0.2,
     highlight: list[str] | None = None,
 ):
     """Scatter ARF size × cluster for CB types (legacy nb 10 cell 34,
     `examples_size_vs_cluster_v2`).
 
-    `cb_type_df` must have `instance` + `size` columns (from `get_rf_type_cb`)."""
+    `cb_type_df` must have `instance`, `region` and a size column named
+    `size_col`. Pass `size_col="ahull_size"` (e.g. `get_rf_ahull_type_cb()`) to
+    use the alpha-hull size instead of the 2D-Gaussian `size`; `size_lo`/
+    `size_hi`/`size_tickvals` set the (log) x-axis to fit the chosen metric."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     n_clu = int(cb_cluster_df["cluster"].max())
     cluster_names = _cb_cluster_labels(n_clu, _cb_cluster_side(cb_cluster_df))
     stars = list(highlight) if highlight is not None else _CB_CLUSTER_TYPES.get("r", [])
 
     merged = cb_cluster_df.merge(
-        cb_type_df[["instance", "size", "region"]], on="instance", how="inner",
+        cb_type_df[["instance", size_col, "region"]], on="instance", how="inner",
     ).copy()
     rng = np.random.default_rng(0)
     merged["y"] = merged["cluster"].astype(float) + rng.uniform(-jitter, jitter, size=len(merged))
 
     fig = _scatter(
-        merged, "size", "y", "region", "instance",
+        merged, size_col, "y", "region", "instance",
         colored_region_df, stars, height=400, width=500,
     )
     fig.update_yaxes(
@@ -4059,8 +4331,9 @@ def plot_cb_clusters_size_vs_cluster(
         tickvals=np.arange(1, n_clu + 1), ticktext=cluster_names,
     )
     fig.update_xaxes(type="log", tickformat="d",
-                     tickvals=[5, 10, 50, 100], range=[np.log10(4.5), np.log10(250)])
-    fig.update_layout(yaxis_title="cluster", xaxis_title="ARF size",
+                     tickvals=list(size_tickvals),
+                     range=[np.log10(size_lo), np.log10(size_hi)])
+    fig.update_layout(yaxis_title="cluster", xaxis_title="ARF size (col)",
                       xaxis_title_standoff=0, yaxis_title_standoff=2)
     _save(fig, save_dir, f"{dataset}_examples_size_vs_cluster_v2.pdf", html=True)
     return fig
@@ -4119,7 +4392,10 @@ def plot_cb_clusters_intra_connectivity(
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     n = intra["n_clu"]
     tick_labels = _cb_cluster_labels(n, "r")
-    fig = _heatmatrix(intra["matrix"], tick_labels, cmap="Greys", height=600, width=600)
+    fig = _heatmatrix(
+        intra["matrix"], tick_labels, cmap="Greys", height=600, width=600,
+        font_size=18 * 1.2,  # 20% larger than the _heatmatrix default
+    )
     fig.update_layout(
         title=f"all weights: {intra['total_weight']: .0f}",
         xaxis_title="post", yaxis_title="pre", xaxis_tickangle=0,
@@ -4254,15 +4530,15 @@ def _plot_layer_lr_scatter(
     highlight: list[str] | None = None,
 ):
     """Shared scatter builder for right-layer vs left-layer. Filters to OL
-    output + CB rows, recolors OL output with `colored_main_groups_df`."""
+    output + CB rows, recolors VPN with `colored_main_groups_df`."""
     cmap = colored_region_df.copy()
-    cmap.loc["OL output", "color"] = colored_main_groups_df.loc["OL output", "color"]
+    cmap.loc["VPN", "color"] = colored_main_groups_df.loc["VPN", "color"]
     df = df[~df[id_col].str.contains("_unclear", regex=False)]
     ol = df[
         df["region"].isin(["left OL", "right OL"])
-        & (df["main_groups"] == "OL output")
+        & (df["main_groups"] == "VPN")
     ].copy()
-    ol["region"] = "OL output"
+    ol["region"] = "VPN"
     cb = df[df["region"] == "CB"]
     plot_df = pd.concat([ol, cb], axis=0, ignore_index=True)
     stars = list(highlight) if highlight else []
@@ -4540,27 +4816,146 @@ def plot_cb_rf_size_summary(
 
 
 # %%
+def plot_cb_ahull_size_summary(
+    ahull_type_df: pd.DataFrame, colored_region_df: pd.DataFrame,
+    *, size_col: str = "ahull_size", size_lo: float = 5, size_hi: float = 1000,
+    size_tickvals: tuple[float, ...] = (10, 100, 1000),
+    star_types: list[str] | None = None,
+    dataset: str = DATASET, save_dir: Path | None = None,
+):
+    """Alpha-hull ARF size histogram + size-vs-layer scatter, coloured by
+    region (SI Fig. 10b).
+
+    Alpha-hull counterpart of the 2D-Gaussian `plot_cb_rf_size_summary` size
+    panels: there is no fit-quality (`r2`) gate because the alpha hull is
+    defined for every neuron, and the (log) size axis is widened via
+    `size_lo`/`size_hi`/`size_tickvals` to fit the larger hull values.
+    `ahull_type_df` is per-instance with `instance`, `region`, `hitting_time`
+    and a size column named `size_col` — e.g. `get_rf_ahull_type_cb()` (filter
+    to `region == 'CB'` for VCBN-only). `star_types` defaults to the CB cluster
+    example types (`_CB_CLUSTER_TYPES['r']`, the same set highlighted in Main
+    Fig. 4c and SI 10c). Writes `{dataset}_cb_size_hist.pdf` and
+    `{dataset}_cb_layer_vs_size.pdf`."""
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
+    stars = list(star_types) if star_types is not None else _CB_CLUSTER_TYPES.get("r", [])
+    sub = ahull_type_df.dropna(subset=[size_col, "hitting_time"]).copy()
+    figs = []
+
+    bins = 2 ** np.linspace(np.log2(size_lo), np.log2(size_hi), 12)
+    fig = _hist_lines_v(sub, size_col, "region", bins, colored_region_df,
+                        height=400, width=300)
+    fig.update_layout(
+        yaxis_title="ARF size", xaxis_title="frac. cell types",
+        xaxis_range=[-.01, 0.5], xaxis_title_standoff=0, yaxis_title_standoff=2,
+    )
+    fig.update_yaxes(type="log", tickformat="d",
+                     tickvals=list(size_tickvals),
+                     range=[np.log10(size_lo), np.log10(size_hi)])
+    figs.append((fig, f"{dataset}_cb_size_hist.pdf"))
+
+    fig = _scatter(sub, "hitting_time", size_col, "region", "instance",
+                   colored_region_df, stars, height=400, width=400)
+    fig.update_yaxes(type="log", tickformat="d",
+                     tickvals=list(size_tickvals),
+                     range=[np.log10(size_lo), np.log10(size_hi)])
+    fig.update_xaxes(range=[0.8, 5.2])
+    fig.update_layout(xaxis_title="layer", yaxis_title="ARF size",
+                      xaxis_title_standoff=0, yaxis_title_standoff=2)
+    figs.append((fig, f"{dataset}_cb_layer_vs_size.pdf"))
+
+    for fig, name in figs:
+        _save(fig, save_dir, name, html=True)
+    return figs
+
+
+# %%
+def plot_cb_vcbn_ahull_size_comparison(
+    cmp_df: pd.DataFrame, colored_region_df: pd.DataFrame,
+    *, size_lo: float = 1, size_hi: float = 1000,
+    star_types: list[str] | None = None,
+    dataset: str = DATASET, save_dir: Path | None = None,
+):
+    """VCBN alpha-hull arbor size vs propagated RF size (SI Fig. 10a) — the
+    VCBN analogue of the OL `examples_ahull_reldiff_vs_size` panel.
+
+    `cmp_df` is per-instance with `instance`, `region`, `size` (propagated RF
+    size, col) and `ahull_size` (alpha-hull arbor size, col). Writes two
+    scatters: `{dataset}_cb_examples_size_vs_ahull.pdf` (ahull vs RF with a
+    y=x diagonal) and `{dataset}_cb_examples_ahull_reldiff_vs_size.pdf`
+    (relative size difference `(ahull - RF) / RF` vs RF size). Both scatters
+    highlight `star_types` (default the CB cluster example types
+    `_CB_CLUSTER_TYPES['r']`, the same set highlighted in SI 10b)."""
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
+    df = cmp_df.dropna(subset=["size", "ahull_size"]).copy()
+    stars = list(star_types) if star_types is not None else _CB_CLUSTER_TYPES.get("r", [])
+
+    fig = _scatter(df, "ahull_size", "size", "region", "instance",
+                   colored_region_df, stars, height=400, width=400)
+    fig.add_trace(go.Scatter(
+        x=[size_lo, size_hi], y=[size_lo, size_hi], mode="lines",
+        line=dict(color="gray", width=2, dash="dash"),
+        showlegend=False, hoverinfo="skip",
+    ))
+    fig.update_layout(
+        xaxis_title="ahull size (col)", yaxis_title="propagated RF size (col)",
+    )
+    fig.update_xaxes(type="log", tickformat="d", dtick=1,
+                     range=[np.log10(size_lo), np.log10(size_hi)])
+    fig.update_yaxes(type="log", tickformat="d", dtick=1,
+                     range=[np.log10(size_lo), np.log10(size_hi)])
+    _save(fig, save_dir, f"{dataset}_cb_examples_size_vs_ahull.pdf", html=True)
+
+    df["rel_diff"] = (df["ahull_size"] - df["size"]) / df["size"]
+    fig_rd = _scatter(df, "size", "rel_diff", "region", "instance",
+                      colored_region_df, stars, height=600, width=600)
+    fig_rd.update_layout(
+        xaxis_title="propagated RF size (col)",
+        yaxis_title="(ahull size - prop RF size) / prop RF size",
+    )
+    fig_rd.update_xaxes(type="log", tickformat="d", dtick=1)
+    _save(fig_rd, save_dir,
+          f"{dataset}_cb_examples_ahull_reldiff_vs_size.pdf", html=True)
+    return fig, fig_rd
+
+
+# %%
 def plot_rf_size_per_layer(
     type_df: pd.DataFrame,
-    *, color: str = "#333333", col_to_deg_size: float = 25.0,
+    *, size_col: str = "ahull_size", color: str = "#333333",
+    col_to_deg_size: float = 25.0,
     dataset: str = DATASET, save_dir: Path | None = None,
-    width: int = 896, height: int = 280, font_size: float = 15.12,
+    width: int = 896, height: int = 280, font_size: float = 19.656,
 ):
-    """Single-box-per-layer box plot of ARF size vs hitting-time layer.
-    Size in deg² (col² × `col_to_deg_size`, default 25 — same factor used by
+    """Single-box-per-layer box plot of ARF (arbor alpha-hull) size vs
+    hitting-time layer, one box per half-integer layer. Size in deg² (col² ×
+    `col_to_deg_size`, default 25 — same factor used by
     `plot_rf_size_vs_experiment`). Bin width 0.5, centers at multiples of 0.5
-    (0, 0.5, ..., 6). Pass OL + VPN + VCBN combined. Legacy nb 10."""
+    (0, 0.5, ..., 6). Each x tick shows the layer and, on a second line in
+    parentheses, the number of neurons (rows) in that bin. Pass a per-neuron df
+    with `hitting_time` and `size_col` columns — e.g. `get_rf_ahull_neuron()`,
+    whose `ahull_size` is the per-neuron alpha-hull (OL intrinsic + VPN + VCBN
+    pooled). Legacy nb 10."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     bins = np.arange(-0.25, 6 + 0.25 + 1e-9, 0.5)
     labels = (bins[1:] + bins[:-1]) / 2
     df = type_df.copy()
-    df["bin"] = pd.cut(df["hitting_time"], bins=bins, labels=labels).astype(float)
-    df = df.dropna(subset=["bin", "size"])
-    df["size_deg"] = df["size"] * col_to_deg_size
+    # Fold the high tail into the last visible layer so nothing is dropped:
+    # clip the hitting time to <= 5 before binning, so every neuron with
+    # layer > 4.75 (incl. the formerly-cropped layer > 5.25) goes into layer 5.
+    ht = df["hitting_time"].clip(upper=5.0)
+    df["bin"] = pd.cut(ht, bins=bins, labels=labels).astype(float)
+    df = df.dropna(subset=["bin", size_col])
+    df["size_deg"] = df[size_col] * col_to_deg_size
+
+    # All half-integer layer ticks in view; second line = neuron count per bin
+    # (one row per neuron).
+    counts = df.groupby("bin").size()
+    tickvals = [v for v in labels if 1.0 <= v <= 5.0]
+    ticktext = [f"{v:g}<br>({int(counts.get(v, 0))})" for v in tickvals]
 
     fig = go.Figure()
     fig.add_trace(go.Box(
-        x=df["bin"], y=df["size_deg"],
+        x=df["bin"], y=df["size_deg"], boxpoints=False,
         marker=dict(color=color), line=dict(color=color),
     ))
     fig.update_layout(
@@ -4570,13 +4965,134 @@ def plot_rf_size_per_layer(
         height=height, width=width, showlegend=False,
         xaxis_range=[0.5, 5.5], boxmode="group",
     )
-    fig.update_xaxes(title_standoff=0, **_AXIS)
+    fig.update_xaxes(title_standoff=0, tickvals=tickvals, ticktext=ticktext, **_AXIS)
     fig.update_yaxes(type="log", tickformat="d",
-                     tickvals=[50, 100, 500, 1000, 5000],
-                     range=[np.log10(25), np.log10(8750)],
+                     tickvals=[100, 1000, 10000],
+                     range=[np.log10(25), np.log10(25000)],
                      title_standoff=2, **_AXIS)
     _save(fig, save_dir, f"{dataset}_size_per_layer.pdf", html=True)
     return fig
+
+
+# %%
+def plot_propagated_arf_example(
+    meta: pd.DataFrame, stepsn, raw_params: pd.DataFrame, cell_type: str,
+    in_instances: list[str], *, bodyId: int | None = None, rng=None,
+    dataset: str = DATASET, save_dir: Path | None = None,
+):
+    """Propagated effective-weight RF (hex heatmap) for one randomly-selected
+    neuron of `cell_type`, saved as a PDF. Shows the raw propagated ARF only —
+    no 2D-Gaussian or alpha-hull fit is overlaid. Companion to
+    `plot_rf_size_per_layer` (Main Fig. 6b).
+
+    One body is drawn at random from the `raw_params` rows of `cell_type`
+    (pass `rng` for reproducibility, or an explicit `bodyId`). `meta`/`stepsn`
+    must be the propagation matrix the RF came from: the OL-subset pair
+    (`get_ol_meta` / `get_ol_stepsn_sum`, `get_rf_raw_ol`) for OL-region types,
+    the full-brain pair (`get_meta` / `<dataset>_<side>_lat_flow_sum.npz`,
+    `get_rf_raw_cb`) for CB types. Returns (fig, bodyId), or (None, bodyId) if
+    the type/body has no propagated RF.
+    """
+    from connectome_interpreter.external_map import hex_heatmap
+    from utils.ol_rf import compute_rf
+
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
+    sub = raw_params[raw_params["cell_type"] == cell_type]
+    if sub.empty:
+        return None, None
+    if bodyId is None:
+        rng = rng if rng is not None else np.random.default_rng(0)
+        bodyId = int(rng.choice(sub["bodyId"].to_numpy()))
+    elif bodyId not in set(sub["bodyId"]):
+        return None, bodyId
+
+    inidx = meta[meta["instance"].isin(in_instances)].idx.values
+    outidx = meta[meta["bodyId"] == bodyId].idx.values
+    df = compute_rf(meta, stepsn, inidx, outidx)
+    if df.empty:
+        return None, bodyId
+    tot_max = float(np.abs(df["effective weight"]).max())
+    orig = df.set_index("coords")[["effective weight"]]
+    orig = orig[~orig.index.duplicated()]
+    fig = hex_heatmap(
+        orig, custom_colorscale="RdBu_r",
+        global_min=-tot_max, global_max=tot_max, dataset="mcns_right",
+    )
+    fig.update_traces(marker_line_width=0)  # drop the gray hexagon outlines
+    fig.update_layout(title=f"{cell_type} ({bodyId}) — propagated ARF")
+    _save(fig, save_dir, f"{dataset}_propagated_arf_{cell_type}_{bodyId}.pdf")
+    return fig, bodyId
+
+
+# %%
+def plot_combined_arf(
+    meta: pd.DataFrame, stepsn, bodyIds, in_instances: list[str], *,
+    weights=None, label: str = "combined", title: str | None = None,
+    cmax: float | None = None,
+    dataset: str = DATASET, save_dir: Path | None = None,
+    save_name: str | None = None,
+):
+    """Combined propagated effective-weight ARF (hex heatmap) over a set of
+    neurons. For each visual-input hex column the effective weights from
+    `in_instances` onto each body in `bodyIds` are combined across neurons:
+    a plain sum by default, or — if `weights` is given — a weighted sum, with
+    each body's ARF scaled by `weights[bodyId]` before summing (e.g. the body's
+    `inprop` weight onto a downstream target). Companion to
+    `plot_propagated_arf_example`, which draws a single neuron.
+
+    `meta`/`stepsn` must be the propagation matrix the bodies live in: the
+    full-brain pair (`get_meta` / `<dataset>_<side>_lat_flow_sum.npz`) or the
+    OL-subset pair (`get_ol_meta` / `get_ol_stepsn_sum`). `weights` is an
+    optional `{bodyId: float}` mapping (or array aligned to `bodyIds`); bodies
+    absent from it get weight 0. `cmax` sets the symmetric colour-scale bound
+    (`global_min=-cmax`, `global_max=cmax`); pass the corresponding
+    single-neuron ARF's `max(|effective weight|)` to share its scale. Defaults
+    to this set's own max. `save_name` (if given) is the PDF filename. Returns
+    (fig, combined_df) where `combined_df` is indexed by hex `coords` with a
+    single 'effective weight' column, or (None, None) if no body has a
+    propagated RF.
+    """
+    from connectome_interpreter.compress_paths import result_summary
+    from connectome_interpreter.external_map import hex_heatmap
+
+    bids = [int(b) for b in (bodyIds.tolist() if hasattr(bodyIds, "tolist") else bodyIds)]
+    inidx = meta[meta["instance"].isin(in_instances)].idx.values
+    outidx = meta[meta["bodyId"].isin(bids)].idx.values
+    if len(inidx) == 0 or len(outidx) == 0:
+        return None, None
+
+    idx_to_coords = dict(zip(meta.idx, meta.coords))
+    idx_to_body = dict(zip(meta.idx, meta.bodyId))
+    m = result_summary(
+        stepsn, inidx, outidx,
+        inidx_map=idx_to_coords, outidx_map=idx_to_body,
+        combining_method="sum", display_threshold=0, display_output=False,
+    )
+    # m: rows = coords strings, one column per body (str(bodyId)) = its ARF
+    m = m[(m.index != "nan") & (m.index != "None") & (~m.index.isnull())]
+    if m.empty:
+        return None, None
+    if weights is None:
+        combined = m.sum(axis=1)  # plain pooled ARF
+    else:
+        wmap = weights if hasattr(weights, "items") else dict(zip(bids, weights))
+        wser = pd.Series({str(int(b)): float(w) for b, w in wmap.items()})
+        combined = m.mul(wser.reindex(m.columns).fillna(0.0), axis=1).sum(axis=1)
+    orig = combined.to_frame("effective weight")
+    orig = orig[~orig.index.duplicated()]
+    tot_max = float(np.abs(orig["effective weight"]).max())
+    if tot_max == 0:
+        return None, None
+    scale_max = float(cmax) if cmax is not None else tot_max
+    fig = hex_heatmap(
+        orig, custom_colorscale="RdBu_r",
+        global_min=-scale_max, global_max=scale_max, dataset="mcns_right",
+    )
+    fig.update_traces(marker_line_width=0)  # drop the gray hexagon outlines
+    fig.update_layout(title=title or f"{label} — combined ARF (n={len(bids)})")
+    if save_name is not None:
+        _save(fig, save_dir, save_name)
+    return fig, orig
 
 
 # %%
@@ -4585,10 +5101,10 @@ def plot_ol_to_cb_heatmap(
     *, dataset: str = DATASET, save_dir: Path | None = None,
     height: int = 500, width: int = 1050, title_suffix: str = "",
     xlabel: str = "CB types (small <---> medium)",
-    ylabel: str = "OL output types (medium <---> small)",
+    ylabel: str = "VPN types (medium <---> small)",
     show_ticks: bool = False,
 ):
-    """Heatmap of normalised OL-output → CB-type effective weights. Legacy
+    """Heatmap of normalised VPN → CB-type effective weights. Legacy
     nb 10 cell 1d2d8ed4 / e14975dd / 722c0f59."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     fig = go.Figure(data=go.Heatmap(
@@ -4599,7 +5115,7 @@ def plot_ol_to_cb_heatmap(
     ))
     fig.update_layout(
         font=dict(family="arial", size=18),
-        title=f"rel. effective weight from OL output to CB types{title_suffix}",
+        title=f"rel. effective weight from VPN to CB types{title_suffix}",
         xaxis_title=xlabel, yaxis_title=ylabel,
         xaxis_tickangle=-45 if show_ticks else 0,
         paper_bgcolor="white", plot_bgcolor="white",

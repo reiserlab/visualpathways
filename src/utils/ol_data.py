@@ -277,13 +277,13 @@ def get_ol_features(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Visual-input → OL-output feature vectors (heavy compute via lat_flow_sum)."""
+    """Visual-input → VPN feature vectors (heavy compute via lat_flow_sum)."""
     def _compute():
         ol_meta = get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
         stepsn = get_ol_stepsn_sum(dataset=dataset, data_dir=data_dir, side_char=side_char)
         idx_to_instance = dict(zip(ol_meta.idx, ol_meta.instance))
         in_inst = ol_meta[ol_meta.main_groups == "visual input"].instance.unique()
-        out_inst = ol_meta[ol_meta.main_groups == "OL output"].instance.unique()
+        out_inst = ol_meta[ol_meta.main_groups == "VPN"].instance.unique()
         inidx = ol_meta[ol_meta.instance.isin(in_inst)].idx.values
         outidx = ol_meta[ol_meta.instance.isin(out_inst)].idx.values
         feat = _compute_feature_vectors(stepsn, inidx, outidx, idx_to_instance, idx_to_instance)
@@ -306,7 +306,7 @@ def get_ol_clusters(
     frac_thre: float = 0.21, method: str = "ward", metric: str = "euclidean",
     force: bool = False,
 ) -> pd.DataFrame:
-    """Flat clusters of OL-output instances (cached). frac_thre is a fraction of `Z[:,2].max()`."""
+    """Flat clusters of VPN instances (cached). frac_thre is a fraction of `Z[:,2].max()`."""
     import scipy.cluster.hierarchy as sch
 
     def _compute():
@@ -355,7 +355,7 @@ def get_ol_participation(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     frac_thre: float = 0.21, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-neuron participation in each OL-output cluster (cached)."""
+    """Per-neuron participation in each VPN cluster (cached)."""
     def _compute():
         meta_ol = get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
         stepsn = get_ol_stepsn_sum(dataset=dataset, data_dir=data_dir, side_char=side_char)
@@ -508,16 +508,24 @@ def get_ol_clusters_intra(
 def get_ol_sankey_connectivity(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     frac_thre: float = 0.19,
-    in_instances=("L1_R", "L2_R", "L3_R", "R7_R", "R8_R"),
-    weight_thre: float = 5.0,
+    in_instances=(
+        "L1_R", "L2_R", "L3_R", "R7_R", "R8_R",
+        "R7d_R", "R8d_R", "HBeyelet_R",
+    ),
+    weight_thre: float = 100.0, min_plot_neurons: int = 20,
+    output_normalized: bool = True,
     force: bool = False,
 ):
     """Pre-build the diagram-level connectivity matrix used by the Sankey plot.
 
     Bins OL hitting times into layers 1..3, builds diagram labels (input cell
-    types, OLI.{i}, OLO{j}.{i}, plus 'CB' / 'left OL'), and aggregates inprop
-    weight via `result_summary`. Returns a dict with `conn_diagram` (DataFrame)
-    and `meta_sub` (per-neuron diagram assignments).
+    types, OLI.{i}, OLO{j}.{i}, plus 'CB' / 'left OL'), and aggregates connection
+    weight via `result_summary`. If `output_normalized` is false, edge weights are
+    raw synapse counts instead of output-normalized fractions. Returns a dict with
+    `conn_diagram` (DataFrame), `meta_sub` (per-neuron diagram assignments), and
+    `node_table` (per-diagram category / n_neurons / display_layer / plot_node,
+    where `plot_node` marks nodes with at least `min_plot_neurons` neurons plus the
+    forced visual inputs).
     """
     from utils.cache import cached_pickle
     from connectome_interpreter.compress_paths import result_summary
@@ -541,7 +549,7 @@ def get_ol_sankey_connectivity(
         flow_b["hit_bin"] = pd.cut(flow_b["hitting_time"], bins=bins, labels=labels).astype(float)
 
         ol_inst = ol_meta[
-            ol_meta.main_groups.isin(["visual input", "OL internal", "OL output"])
+            ol_meta.main_groups.isin(["visual input", "VIN", "VPN"])
         ].instance.unique()
         cb_inst = meta[is_cb_neuron(meta) | (meta.region == "left OL")].instance.unique()
         meta_sub = meta[meta.instance.isin(ol_inst) | meta.instance.isin(cb_inst)].reset_index(drop=True).copy()
@@ -550,7 +558,7 @@ def get_ol_sankey_connectivity(
         meta_sub = meta_sub[meta_sub.region != "other"].reset_index(drop=True).copy()
 
         # Capture terminal masks BEFORE main_groups gets overwritten below —
-        # otherwise the diagram-label step can't recover the CB-input rows.
+        # otherwise the diagram-label step can't recover the VCN rows.
         cb_mask = is_cb_neuron(meta_sub)
         loff_mask = (meta_sub.region == "left OL") & ~cb_mask
         terminal_mask = cb_mask | loff_mask
@@ -559,31 +567,41 @@ def get_ol_sankey_connectivity(
 
         n_clu = int(clusters["cluster"].max())
         meta_sub["diagram"] = "other"
+        meta_sub["category"] = "other"
         in_idx = meta_sub[meta_sub.instance.isin(in_instances)].index
         meta_sub.loc[in_idx, "diagram"] = meta_sub.loc[in_idx, "cell_type"]
+        meta_sub.loc[in_idx, "category"] = "visual input"
+        meta_sub.loc[in_idx, "hit_bin"] = 0  # inputs are layer 0 (e.g. HBeyelet)
         for i in range(3):
             oli_idx = meta_sub[
-                (meta_sub.main_groups == "OL internal") & (meta_sub.hit_bin == i + 1)
+                (meta_sub.main_groups == "VIN") & (meta_sub.hit_bin == i + 1)
             ].index
             meta_sub.loc[oli_idx, "diagram"] = f"OLI.{i + 1}"
+            meta_sub.loc[oli_idx, "category"] = "VIN"
             for j in range(n_clu):
                 olo_idx = meta_sub[
                     (meta_sub.cluster == j + 1) & (meta_sub.hit_bin == i + 1)
                 ].index
                 if len(olo_idx) > 0:
                     meta_sub.loc[olo_idx, "diagram"] = f"OLO{j + 1}.{i + 1}"
+                    meta_sub.loc[olo_idx, "category"] = "VPN"
 
         meta_sub.loc[cb_mask, "diagram"] = "CB"
+        meta_sub.loc[cb_mask, "category"] = "CB"
         meta_sub.loc[loff_mask, "diagram"] = "left OL"
+        meta_sub.loc[loff_mask, "category"] = "left OL"
         meta_sub = meta_sub[meta_sub.diagram != "other"].copy()
 
         idx_to_diagram = dict(zip(meta_sub.idx, meta_sub.diagram))
 
-        # output-normalized connectivity (= inprop)
-        total_post = prop.sum(axis=1).A1.astype(float)
-        inv = np.zeros_like(total_post)
-        np.reciprocal(total_post, where=total_post != 0, out=inv)
-        inprop = prop.multiply(inv.reshape((-1, 1))).astype(np.float32)
+        # edge weights: output-normalized fractions (inprop) or raw synapse counts
+        if output_normalized:
+            total_post = prop.sum(axis=1).A1.astype(float)
+            inv = np.zeros_like(total_post)
+            np.reciprocal(total_post, where=total_post != 0, out=inv)
+            conn_matrix = prop.multiply(inv.reshape((-1, 1))).astype(np.float32)
+        else:
+            conn_matrix = prop.astype(np.float32)
 
         diagram_names = list(meta_sub["diagram"].unique())
         conn_diagram = pd.DataFrame(
@@ -595,7 +613,7 @@ def get_ol_sankey_connectivity(
         inidx = meta_sub[meta_sub.hit_bin == 0].idx.values
         outidx = meta_sub[meta_sub.hit_bin > 0].idx.values
         conn_i = result_summary(
-            inprop, inidx, outidx, idx_to_diagram, idx_to_diagram,
+            conn_matrix, inidx, outidx, idx_to_diagram, idx_to_diagram,
             combining_method="sum", outprop=False, display_output=False,
         )
         conn_diagram.loc[conn_i.index, conn_i.columns] += conn_i
@@ -605,22 +623,46 @@ def get_ol_sankey_connectivity(
             inidx = meta_sub[meta_sub.hit_bin == i + 1].idx.values
             outidx = meta_sub[meta_sub.hit_bin > i + 1].idx.values
             conn_i = result_summary(
-                inprop, inidx, outidx, idx_to_diagram, idx_to_diagram,
+                conn_matrix, inidx, outidx, idx_to_diagram, idx_to_diagram,
                 combining_method="sum", outprop=False, display_output=False,
             )
             conn_diagram.loc[conn_i.index, conn_i.columns] += conn_i
 
+        # per-diagram node attributes for plotting (height ∝ flow, filtering)
+        node_table = (
+            meta_sub.groupby("diagram", sort=False)
+            .agg(
+                category=("category", "first"),
+                n_neurons=("bodyId", "nunique"),
+                display_layer=("hit_bin", "first"),
+                cluster=("cluster", "first"),
+            )
+            .reset_index()
+        )
+        node_table["display_layer"] = node_table["display_layer"].astype(float)
+        node_table["plot_node"] = node_table["n_neurons"] >= min_plot_neurons
+        node_table.loc[node_table["category"].eq("visual input"), "plot_node"] = True
+
         return {
             "conn_diagram": conn_diagram,
             "meta_sub": meta_sub[["instance", "cell_type", "main_groups", "region",
-                                  "cluster", "hit_bin", "diagram"]].copy(),
+                                  "cluster", "hit_bin", "diagram", "category"]].copy(),
+            "node_table": node_table,
             "n_clu": n_clu,
             "weight_thre": weight_thre,
+            "min_plot_neurons": min_plot_neurons,
+            "output_normalized": output_normalized,
+            "weight_units": (
+                "output-normalized synapse fraction"
+                if output_normalized else "synapse count"
+            ),
         }
 
     tag = f"{frac_thre:.3f}".replace(".", "p")
+    norm_tag = "outnorm" if output_normalized else "rawsyn"
     return cached_pickle(
-        f"{dataset}_OL_{side_char}_sankey_{tag}", _compute, force=force,
+        f"{dataset}_OL_{side_char}_sankey_{tag}_{norm_tag}_n{min_plot_neurons}_in{len(in_instances)}",
+        _compute, force=force,
     )
 
 
@@ -657,7 +699,7 @@ def get_paths_to_instance(
 
 def get_participation_paths(
     instance: str, *, dataset: str = DATASET, data_dir=DATA_DIR,
-    side_char: str = SIDE_CHAR, out_main_group: str = 'OL output',
+    side_char: str = SIDE_CHAR, out_main_group: str = 'VPN',
     outprop: bool = False, force: bool = False,
 ) -> dict:
     """Effective-weight paths from `instance` → `out_main_group` in OL, for each

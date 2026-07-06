@@ -31,6 +31,43 @@ def _split_polarity_types(cell) -> list[str]:
     return [p for p in parts if p and not p.endswith("?")]
 
 
+def _expand_wildcards(parts: list[str], universe) -> list[str]:
+    """Resolve `*` wildcards in cell-type names against the dataset's types.
+
+    A trailing `*` means "this prefix followed by anything" — e.g. `T4*`
+    matches `T4a, T4b, T4c, T4d`. Each wildcard part is replaced by the bare
+    cell types in `universe` whose name starts with the text before the `*`
+    (sorted, deterministic). `*_unclear` variants are excluded (they are
+    low-confidence type assignments, not real subtypes). Non-wildcard parts
+    pass through unchanged; a wildcard that matches nothing contributes no
+    types."""
+    out: list[str] = []
+    for p in parts:
+        if "*" in p:
+            prefix = p.split("*", 1)[0]
+            out.extend(sorted(
+                t for t in universe
+                if t.startswith(prefix) and "unclear" not in t
+            ))
+        else:
+            out.append(p)
+    return out
+
+
+def _side_cell_types(dataset, data_dir, side_char) -> set[str]:
+    """Bare cell-type names (instance minus the `_R`/`_L` side suffix) present
+    on the requested side of the dataset meta — the universe for `*`
+    expansion (covers both OL and central-brain types)."""
+    suffix = "_R" if side_char == "r" else "_L"
+    side_word = _SIDE_WORD[side_char]
+    meta = get_meta(dataset=dataset, data_dir=data_dir)
+    return {
+        i[:-2]
+        for i in meta.loc[meta.side == side_word, "instance"].dropna().unique()
+        if isinstance(i, str) and i.endswith(suffix)
+    }
+
+
 _CB_POLARITY_PREFIXES = ["DN", "PLP", "PVLP", "TuBu", "ER4d", "LNd_b"]
 
 
@@ -40,6 +77,35 @@ def _cb_polarity_cat(group_label: str) -> int:
         if group_label.startswith(prefix):
             return i
     return len(_CB_POLARITY_PREFIXES)
+
+
+# Manual bar order for the VPN polarity panel (Main 2d, right sub-panel /
+# `main_2_d_2`): these types are pulled to immediately after `LC6`; every
+# other bar keeps its spreadsheet order.
+_VPN_ORDER_ANCHOR = "LC6"
+_VPN_ORDER_AFTER = ["VS", "HS", "LC10a", "MeTu3c"]
+
+
+def _reorder_after(df: pd.DataFrame, anchor: str, moved: list[str]) -> pd.DataFrame:
+    """Row order of `df` with the `moved` cell types (matched on instance
+    prefix = instance minus the side suffix) pulled to immediately after the
+    `anchor` type; all other rows keep their order. Missing `moved` types are
+    skipped; if `anchor` is absent they stay at their original tail position."""
+    names = df["instance"].str[:-2]
+    moved = [m for m in moved if (names == m).any()]
+    moved_set = set(moved)
+    order: list = []
+    inserted = False
+    for i in df.index[~names.isin(moved_set)]:
+        order.append(i)
+        if names[i] == anchor:
+            for m in moved:
+                order.extend(df.index[names == m].tolist())
+            inserted = True
+    if not inserted:
+        for m in moved:
+            order.extend(df.index[names == m].tolist())
+    return df.loc[order].reset_index(drop=True)
 
 
 def _abbreviate_group_label(parts: list[str]) -> str:
@@ -87,40 +153,79 @@ def _abbreviate_group_label(parts: list[str]) -> str:
 _POLARITY_INSTANCE_ALIASES: dict[str, str] = {}
 
 
+def _build_polarity_labels(df, side_types, suffix, instance_map):
+    """Spreadsheet rows -> per-(type, instance) polarity labels.
+
+    Shared core of `get_polarity_experiments` (malecns) and the flywire
+    adaptation in `make_figures/flywire_main_2d_4d_polarity`. Filters to
+    `ON`/`OFF`, splits multi-type cells, expands `*` wildcards against
+    `side_types`, drops cell types with conflicting polarity, builds
+    `*`-stripped `group_label`s, and maps `type + suffix` to instance name(s)
+    via `instance_map` (a callable that may return a list for 1->many remaps).
+    Returns columns: `type, polarity, instance, group_label` (one row per
+    instance). Callers add `in_ol`.
+    """
+    df = df[df["Contrast selectivity"].isin(["ON", "OFF"])].copy()
+    df["_parts"] = df["Neuron type"].apply(_split_polarity_types)
+    # Resolve `*` wildcards to the matching cell types in this dataset.
+    df["_types"] = df["_parts"].apply(lambda p: _expand_wildcards(p, side_types))
+    # Drop cell types labelled both ON and OFF anywhere (ambiguous polarity).
+    _expl = df[["Contrast selectivity", "_types"]].explode("_types").dropna(subset=["_types"])
+    ambiguous = set(
+        _expl.groupby("_types")["Contrast selectivity"].nunique().pipe(lambda s: s[s > 1]).index
+    )
+
+    def _surviving(part):
+        return [t for t in _expand_wildcards([part], side_types) if t not in ambiguous]
+
+    # group_label is the original entry abbreviated, keeping only parts that
+    # still contribute a non-ambiguous type. A wildcard part shows as its bare
+    # prefix (e.g. `T4*` -> `T4`) — one averaged bar, not `T4*`.
+    df["group_label"] = df["_parts"].apply(
+        lambda parts: _abbreviate_group_label(
+            [p.split("*", 1)[0] if "*" in p else p for p in parts if _surviving(p)]
+        )
+    )
+    df["_types"] = df["_types"].apply(lambda ts: [t for t in ts if t not in ambiguous])
+    df = df.explode("_types").dropna(subset=["_types"])
+    df = df[df["_types"] != ""]
+    df = df.rename(columns={"_types": "type"})
+    df["instance"] = (df["type"].astype(str) + suffix).map(instance_map)
+    df = df.explode("instance")
+    return df[["type", "Contrast selectivity", "instance", "group_label"]].reset_index(drop=True)
+
+
 def get_polarity_experiments(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
-    source_file: str = "fly_literature_experiments.xlsx",
-    sheet: str = "input sensitivity",
+    source_file: str = "TableS2_experimental_data.xlsx",
+    sheet: str = "contrast selectivity",
     force: bool = False,
 ) -> pd.DataFrame:
-    """Curated ON/OFF polarity labels from the fly-literature experiments
-    spreadsheet.
+    """Curated ON/OFF polarity labels from the experimental-data spreadsheet.
 
     Keeps rows whose `polarity` is exactly `'ON'` or `'OFF'` (drops NaN / any
     value with `'?'`). Splits comma-separated multi-type cells into one row
-    per type; drops parts that themselves end in `'?'`. Adds `instance` =
-    `type + '_R'` (or `'_L'` if `side_char='l'`) and `in_ol` based on
-    `get_ol_meta` membership. Applies `_POLARITY_INSTANCE_ALIASES` for types
-    whose sheet name maps to a sub-variant in the dataset's meta.
+    per type; drops parts that themselves end in `'?'`. Resolves `*` wildcards
+    (e.g. `T4*` → `T4a..T4d`) against the dataset's actual types. Cell types
+    labelled with conflicting polarity (both `'ON'` and `'OFF'` somewhere in
+    the sheet, e.g. `ER3*`) are ambiguous and dropped everywhere. Adds
+    `instance` = `type + '_R'` (or `'_L'` if `side_char='l'`) and `in_ol`
+    based on `get_ol_meta` membership. Applies `_POLARITY_INSTANCE_ALIASES`
+    for types whose sheet name maps to a sub-variant in the dataset's meta.
     """
     def _compute():
         suffix = "_R" if side_char == "r" else "_L"
         df = pd.read_excel(PARAMS_DIR / source_file, sheet_name=sheet)
-        df = df[df["polarity"].isin(["ON", "OFF"])].copy()
-        df["_parts"] = df["Neuron type"].apply(_split_polarity_types)
-        # group_label captures the original multi-type entry before exploding,
-        # abbreviated when types share a prefix with consecutive numeric suffixes
-        df["group_label"] = df["_parts"].apply(_abbreviate_group_label)
-        df = df.explode("_parts").dropna(subset=["_parts"])
-        df = df.rename(columns={"_parts": "type"})
-        df["instance"] = df["type"].astype(str) + suffix
-        df["instance"] = df["instance"].replace(_POLARITY_INSTANCE_ALIASES)
+        side_types = _side_cell_types(dataset, data_dir, side_char)
+        out = _build_polarity_labels(
+            df, side_types, suffix, lambda x: _POLARITY_INSTANCE_ALIASES.get(x, x),
+        )
         ol_instances = set(
             get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
             .instance.dropna().unique()
         )
-        df["in_ol"] = df["instance"].isin(ol_instances)
-        return df[["type", "polarity", "instance", "in_ol", "group_label"]].reset_index(drop=True)
+        out["in_ol"] = out["instance"].isin(ol_instances)
+        return out[["type", "Contrast selectivity", "instance", "in_ol", "group_label"]].reset_index(drop=True)
 
     return cached_parquet(
         f"{dataset}_OL_{side_char}_polarity_labels", _compute, force=force,
@@ -131,17 +236,19 @@ def get_ol_polarity_comparison(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Per-OL-instance effective-weight feature vectors from visual-input seeds
-    plus predicted polarity (`'ON' if L1 > L2 else 'OFF'`) and match flag.
+    """Per-entry effective-weight feature vectors from visual-input seeds plus
+    predicted polarity (`'ON' if L1 > L2 else 'OFF'`) and match flag.
 
-    Feature vectors are normalised per row (rows that sum to zero stay zero).
-    Seed inputs are every instance with `hitting_time == 0` in
+    Feature vectors are normalised per instance (rows that sum to zero stay
+    zero), then averaged over the cell types sharing one spreadsheet entry, so
+    each entry is a single bar (e.g. `T4*` -> one `T4` bar, the mean of
+    T4a..T4d). Seed inputs are every instance with `hitting_time == 0` in
     `get_ol_flow_type` — legacy behaviour (includes L1/L2/L3, R7/R7p/R7y,
     R8/R8p/R8y, R7d/R8d, HBeyelet). Uses OL `lat_flow_sum` (fast, OL-only).
     """
     def _compute():
         labels = get_polarity_experiments(
-            dataset=dataset, data_dir=data_dir, side_char=side_char,
+            dataset=dataset, data_dir=data_dir, side_char=side_char
         )
         labels = labels[labels["in_ol"]].reset_index(drop=True)
 
@@ -170,17 +277,38 @@ def get_ol_polarity_comparison(
             ol_meta[["instance", "main_groups"]].drop_duplicates("instance"),
             on="instance", how="left",
         )
-        suffix = "_R" if side_char == "r" else "_L"
-        l1_col, l2_col = f"L1{suffix}", f"L2{suffix}"
-        l1 = merged[l1_col] if l1_col in merged.columns else 0.0
-        l2 = merged[l2_col] if l2_col in merged.columns else 0.0
-        merged["predicted"] = np.where(l1 > l2, "ON", "OFF")
-        merged["match"] = merged["predicted"] == merged["polarity"]
         # Drop visual-input seeds themselves — they sit on the input side of the
         # flow so their own feature vectors collapse to self-loops, and L1/L2
         # are the rule's own predictors (comparing them is tautological).
-        merged = merged[merged["main_groups"] != "visual input"].reset_index(drop=True)
-        return merged
+        merged = merged[merged["main_groups"] != "visual input"]
+        suffix = "_R" if side_char == "r" else "_L"
+
+        # Average the cell types sharing one spreadsheet entry into a single bar
+        # per group_label (e.g. T4* -> mean of T4a..T4d). Keep first-appearance
+        # (spreadsheet) order.
+        feature_cols = [c for c in feat_norm.columns if c != "instance"]
+        grouped = (
+            merged.groupby(["group_label", "Contrast selectivity"], sort=False)[feature_cols]
+            .mean()
+            .reset_index()
+        )
+        grouped["instance"] = grouped["group_label"] + suffix
+        grouped["type"] = grouped["group_label"]
+        grouped["main_groups"] = (
+            merged[["group_label", "main_groups"]]
+            .drop_duplicates("group_label")
+            .set_index("group_label")["main_groups"]
+            .reindex(grouped["group_label"].values)
+            .values
+        )
+        l1_col, l2_col = f"L1{suffix}", f"L2{suffix}"
+        l1 = grouped[l1_col] if l1_col in grouped.columns else 0.0
+        l2 = grouped[l2_col] if l2_col in grouped.columns else 0.0
+        grouped["predicted"] = np.where(l1 > l2, "ON", "OFF")
+        grouped["match"] = grouped["predicted"] == grouped["Contrast selectivity"]
+        # Custom VPN-panel order: VS, HS, LC10a, MeTu3c pulled after LC6.
+        grouped = _reorder_after(grouped, _VPN_ORDER_ANCHOR, _VPN_ORDER_AFTER)
+        return grouped.reset_index(drop=True)
 
     return cached_parquet(
         f"{dataset}_OL_{side_char}_polarity_comparison", _compute, force=force,
@@ -242,7 +370,7 @@ def get_cb_polarity_comparison(
         # Step 3: mean over cell types sharing the same spreadsheet entry
         feature_cols = [c for c in type_norm.columns if c != "instance"]
         grouped = (
-            merged.groupby(["group_label", "polarity"])[feature_cols]
+            merged.groupby(["group_label", "Contrast selectivity"])[feature_cols]
             .mean()
             .reset_index()
         )
@@ -259,7 +387,7 @@ def get_cb_polarity_comparison(
         l1 = grouped[l1_col] if l1_col in grouped.columns else 0.0
         l2 = grouped[l2_col] if l2_col in grouped.columns else 0.0
         grouped["predicted"] = np.where(l1 > l2, "ON", "OFF")
-        grouped["match"] = grouped["predicted"] == grouped["polarity"]
+        grouped["match"] = grouped["predicted"] == grouped["Contrast selectivity"]
         grouped["_cat"] = grouped["group_label"].apply(_cb_polarity_cat)
         grouped = grouped.sort_values(["_cat", "group_label"]).drop(columns="_cat").reset_index(drop=True)
         return grouped
