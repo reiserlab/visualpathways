@@ -150,6 +150,8 @@ def fit_rf_gaussian(rf_df, p0=None, sigma=1.0, cumsum_thre=0.7):
     rf_raw = rel_rf_cut_df['effective weight'].values / rel_rf_cut_df['effective weight'].sum() 
     ss_res = np.sum((rf_raw - rf_fitted)**2)
     ss_tot = np.sum((rf_raw - np.mean(rf_raw))**2)
-    r2 = 1 - ss_res/ss_tot
+    # R^2 is undefined when the raw RF has zero variance (e.g. a single hex),
+    # which makes ss_tot == 0; return nan instead of triggering a divide warning.
+    r2 = 1 - ss_res/ss_tot if ss_tot != 0 else np.nan
 
     return np.insert(p0,0,r2), rf_fitted

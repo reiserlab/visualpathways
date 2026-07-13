@@ -20,8 +20,9 @@ from utils.config import (
 import pandas as pd
 import numpy as np
 import re
+import warnings
 import scipy.sparse as sp
-from scipy.spatial import distance
+from scipy.spatial import distance, ConvexHull
 
 from utils import olc_client
 c = olc_client.connect(verbose=False)
@@ -34,12 +35,154 @@ import navis
 import navis.interfaces.neuprint as neu
 # from fafbseg import flywire
 
-# Phase E.4: cached RF functions appended below. They need cached_parquet
-# plus several `get_*` functions from sibling utils modules.
+# The cached RF functions below need cached_parquet plus several `get_*`
+# functions from sibling utils modules.
 from utils.cache import cached_parquet
 from utils.core_data import _SIDE_WORD, get_flow, get_flow_per_group, get_meta, get_ol_flow_type, get_ol_meta
 from utils.ol_data import get_ol_connectivity, get_ol_stepsn_sum, get_ol_type_directedness
 from utils.vic import get_ol_cb_vic_type, get_ol_type_vic, get_vcbn_types
+from utils.alpha_shape import alpha_shape_2d
+
+
+def count_col_ahull(df, thr_mode="max", remove_frac=0.1, min_remove_frac=0.0,
+                    alpha=0.5, min_alpha=0.0, alpha_reduction=0.1):
+    """Alpha-hull area of the columns retained from a hex-grid weight distribution.
+
+    Thresholds the weights (``thr_mode`` ``"max"`` = keep points above
+    ``remove_frac`` of the max; ``"cumsum"`` = drop the smallest ``remove_frac``
+    of total weight), morphs the kept square-grid coordinates into a regular hex
+    grid, pads each point with its six hex neighbours, and fits an alpha shape
+    (concave hull). If the kept points are insufficient for a hull (empty, <3
+    points, or collinear / near-zero-area convex hull) ``remove_frac`` is lowered
+    by 0.1 and retried down to ``min_remove_frac``.
+
+    ``df`` is a single-column DataFrame or Series of weights indexed by ``'h,v'``
+    coordinate strings (the effwt_vis* column convention). Returns
+    ``(edge_points, edges, area, (com_x, com_y), xy_coord_kept, used_frac,
+    used_alpha)``; ``area`` is a length-1 list in units of hex-cell area
+    (``3*sqrt(3)/2``). On failure ``edge_points``/``edges`` are ``None`` and
+    ``area`` reports only the kept-column count.
+    """
+    if not (0 <= float(remove_frac) <= 1):
+        raise ValueError("remove_frac must be in [0, 1]")
+    if not (0 <= float(min_remove_frac) <= float(remove_frac)):
+        raise ValueError("min_remove_frac must be in [0, remove_frac]")
+
+    # check df is a single column DataFrame or Series
+    if not isinstance(df, (pd.DataFrame, pd.Series)) or (isinstance(df, pd.DataFrame) and df.shape[1] != 1):
+        raise ValueError("df must be a pandas DataFrame with a single column or a pandas Series")
+
+    # check df is not empty
+    if df.values.sum() == 0:
+        warnings.warn("weights sum to 0 Returning NaN results.")
+        return [], set(), [np.nan], (np.nan, np.nan), None, float(remove_frac), alpha
+
+    # convert df to series if it's a single column DataFrame
+    if isinstance(df, pd.DataFrame):
+        df = df.squeeze(axis=1)
+
+    # get xy coord from index
+    xy_coord = df.index.to_series().str.split(',', expand=True).astype(float)
+    xy_coord.columns = ['x', 'y']
+
+    # thresholding effective weight points for alpha shape, "max" or "cumsum".
+    # remove_frac starts at the user-supplied value, but if the kept points are
+    # insufficient for an alpha shape (empty, fewer than 3 points, or collinear /
+    # near-zero-area convex hull), we lower remove_frac by 0.1 and retry. If
+    # remove_frac reaches min_remove_frac and the checks still fail, we give up
+    # and return.
+    if thr_mode not in ("max", "cumsum"):
+        raise ValueError("Invalid thr_mode. Choose 'max' or 'cumsum'.")
+
+    cur_frac = float(remove_frac)
+    while True:
+        if thr_mode == "max":
+            # remove points with effective weight smaller than x% of max
+            thr_val = cur_frac * df.values.max()
+        else:  # cumsum
+            # remove smallest x% of total weight
+            weights_sorted = df.sort_values()
+            cutoff = cur_frac * weights_sorted.sum()
+            thr_val = weights_sorted[weights_sorted.cumsum() >= cutoff].iloc[0]
+
+        # thresholding
+        mask_pos = df.values > thr_val
+        xy_coord_kept = xy_coord[mask_pos]
+        df_kept = df[mask_pos]
+
+        # Check if we have enough non-collinear points
+        check_failed = False
+        if len(xy_coord_kept) == 0:
+            check_failed = True
+        elif len(xy_coord_kept) < 3:
+            check_failed = True
+        else:
+            try:
+                hull = ConvexHull(xy_coord_kept.values)
+                if hull.volume < 1e-10:  # Nearly zero area
+                    check_failed = True
+            except Exception:
+                check_failed = True
+
+        if not check_failed:
+            break  # enough points, proceed with alpha shape
+
+        if cur_frac <= min_remove_frac:
+            # give up: return the (failing) result at the current threshold
+            if len(xy_coord_kept) == 0:
+                return None, None, [0], (np.nan, np.nan), xy_coord_kept, cur_frac, alpha
+            com_x = np.average(xy_coord_kept['x'], weights=df_kept.values)
+            com_y = np.average(xy_coord_kept['y'], weights=df_kept.values)
+            return None, None, [xy_coord_kept.shape[0]], (com_x, com_y), xy_coord_kept, cur_frac, alpha
+
+        # lower the threshold fraction and retry, not going below min_remove_frac
+        cur_frac = round(cur_frac - 0.1, 10)
+        if cur_frac < min_remove_frac:
+            cur_frac = float(min_remove_frac)
+
+    df = df_kept
+
+    # compute com weighted by values
+    com_x = np.average(xy_coord_kept['x'], weights=df.values)
+    com_y = np.average(xy_coord_kept['y'], weights=df.values)
+
+    # df.index is a square grid, with range x ~ [-15 19], range y ~ [7 72]
+    # nb points in square grid is [+1 +1], in hex grid of side = 1 is [1+1/2, 3/2/sqrt(3)]
+    # to morph into a regular hex grid with side length = 1
+    # multiply x by 3/2 and y by sqrt(3)/2
+    xy_coord_kept.loc[:, 'x'] = xy_coord_kept['x'] * 3/2
+    xy_coord_kept.loc[:, 'y'] = xy_coord_kept['y'] * np.sqrt(3)/2
+
+    # correction for edge points
+    # for each xy_coord_kept, add six points around it with distance 1 in the corrected hex grid
+    directions = np.array([[1, 0], [0.5, np.sqrt(3)/2], [-0.5, np.sqrt(3)/2], [-1, 0], [-0.5, -np.sqrt(3)/2], [0.5, -np.sqrt(3)/2]])
+    aux_points = []
+    for _, row in xy_coord_kept.iterrows():
+        for d in directions:
+            aux_points.append([row['x'] + d[0], row['y'] + d[1]])
+    # combine edge points with xy_coord_kept for alpha shape
+    aux_points = np.array(aux_points)
+    aux_points = np.vstack([xy_coord_kept.values, aux_points])
+
+    edge_points, edges, area, used_alpha = alpha_shape_2d(aux_points, alpha=alpha, min_alpha=min_alpha, alpha_reduction=alpha_reduction)
+
+    if len(area) != 1:
+        area = [np.nan]
+
+    # in units of hex cell area, which is 3*sqrt(3)/2 * (side length)^2.
+    # For side length = 1 a in regular hex grid:
+    area = [a / (3 * np.sqrt(3) / 2) for a in area]
+
+    # go back to the original coord
+    xy_coord_kept.loc[:, 'x'] = xy_coord_kept['x'] / (3/2)
+    xy_coord_kept.loc[:, 'y'] = xy_coord_kept['y'] / (np.sqrt(3)/2)
+    if len(edge_points) == 1:
+        edge_points[0][:, 0] = edge_points[0][:, 0] / (3/2)
+        edge_points[0][:, 1] = edge_points[0][:, 1] / (np.sqrt(3)/2)
+    else:
+        warnings.warn("Multiple ahulls.")
+
+    return edge_points, edges, area, (com_x, com_y), xy_coord_kept, cur_frac, used_alpha
 
 
 def hexw_columnar(
@@ -185,9 +328,9 @@ def hexw_columnar(
 def compute_rf(meta_ol, stepsn, inidx, outidx, *, idx_to_coords=None, idx_to_root=None):
     """Single-target RF from the OL-subset `lat_flow_sum` (stepsn).
 
-    Returns a long df (coords, x, y, bodyId, effective weight). Matches legacy
-    `computing_functions.compute_rf`. `idx_to_coords` / `idx_to_root` can be
-    passed in to avoid rebuilding the OL-wide dicts on every call.
+    Returns a long df (coords, x, y, bodyId, effective weight).
+    `idx_to_coords` / `idx_to_root` can be passed in to avoid rebuilding the
+    OL-wide dicts on every call.
     """
     from connectome_interpreter.compress_paths import result_summary
 
@@ -215,12 +358,26 @@ def compute_rf(meta_ol, stepsn, inidx, outidx, *, idx_to_coords=None, idx_to_roo
     return df
 
 
-def _compute_rf_params(meta_ol, stepsn, in_instances, out_instances, cumsum_thre=0.7):
-    """Fit a 2D Gaussian per target bodyId (across every `out_instances`).
+def _compute_rf_params(meta_ol, stepsn, in_instances, out_instances,
+                       cumsum_thre=0.7, *, ahull=True,
+                       thr_mode="cumsum", remove_frac=0.6, min_rmfrac=0.1):
+    """Per target bodyId, fit a 2D Gaussian and (optionally) an alpha hull from
+    the SAME propagated RF.
 
-    Returns a long df with columns [n_col, r2, x0, y0, a, b, phi, amp, bodyId,
-    instance, seed]. Skips bodies whose total effective input weight is
-    non-positive or whose Gaussian fit yields NaN. Dicts are built once and
+    `compute_rf` runs once per body and feeds both reductions, so the ellipse
+    fit and the alpha-hull size share a single (expensive) propagation pass.
+
+    Returns a long df with the Gaussian columns [n_col, r2, x0, y0, a, b, phi,
+    amp] plus, when `ahull=True`, the alpha-hull columns [ahull_size,
+    ahull_com_x, ahull_com_y, ahull_kept_points, ahull_rmfrac, ahull_alpha];
+    always [bodyId, idx, instance, seed]. `idx` is the full-brain index
+    (`idx_full` when `meta_ol` is the OL sidecar, else `idx`) so per-neuron
+    joins downstream are unambiguous.
+
+    A body is skipped only when its RF is empty or its total effective weight is
+    non-positive. Rows whose Gaussian fit yields NaN or whose hull is degenerate
+    are kept with only that block NaN-filled, so ellipse-valid and hull-valid
+    bodies are unioned; callers drop NaN per metric. Dicts are built once and
     reused for every body.
     """
     from utils.external_rf import fit_rf_gaussian
@@ -229,12 +386,15 @@ def _compute_rf_params(meta_ol, stepsn, in_instances, out_instances, cumsum_thre
     in_string = "_".join([s[:-2] for s in in_instances])
     idx_to_coords = dict(zip(meta_ol.idx, meta_ol.coords))
     idx_to_root = dict(zip(meta_ol.idx, meta_ol.bodyId))
+    # full-brain idx for per-neuron joins (OL sidecar reindexes idx to 0..N-1)
+    idx_col = "idx_full" if "idx_full" in meta_ol.columns else "idx"
 
     rows = []
     for target in out_instances:
         sub = meta_ol[meta_ol.instance == target]
         outidx_arr = sub.idx.values
         bids = sub.bodyId.values
+        gidx = sub[idx_col].values
         for i, bid in enumerate(bids):
             df = compute_rf(
                 meta_ol, stepsn, inidx, outidx_arr[i:i + 1],
@@ -247,23 +407,57 @@ def _compute_rf_params(meta_ol, stepsn, in_instances, out_instances, cumsum_thre
                 continue
             amp = float(df["effective weight"].max())
             params_ij, rf_fitted = fit_rf_gaussian(df, cumsum_thre=cumsum_thre)
-            rows.append({
+            row = {
                 "n_col": int(rf_fitted.shape[0]), "r2": params_ij[0],
                 "x0": params_ij[1], "y0": params_ij[2],
                 "a": params_ij[3], "b": params_ij[4], "phi": params_ij[5],
-                "amp": amp, "bodyId": int(bid),
+                "amp": amp, "bodyId": int(bid), "idx": int(gidx[i]),
                 "instance": target, "seed": in_string,
-            })
+            }
+            if ahull:
+                row.update({
+                    "ahull_size": np.nan, "ahull_com_x": np.nan,
+                    "ahull_com_y": np.nan, "ahull_kept_points": np.nan,
+                    "ahull_rmfrac": np.nan, "ahull_alpha": np.nan,
+                })
+                try:
+                    dfa = df.set_index("coords")[["effective weight"]]
+                    (edge_points, edges, area, com, kept_points,
+                     used_frac, used_alpha) = count_col_ahull(
+                        dfa, thr_mode=thr_mode, remove_frac=remove_frac,
+                        min_remove_frac=min_rmfrac,
+                    )
+                    if edges is not None and len(edge_points) == 1:
+                        # count_col_ahull returns `area` as a length-1 list even
+                        # on success (a hull-area list); take the scalar.
+                        row.update({
+                            "ahull_size": area[0], "ahull_com_x": com[0],
+                            "ahull_com_y": com[1],
+                            "ahull_kept_points": len(kept_points),
+                            "ahull_rmfrac": used_frac, "ahull_alpha": used_alpha,
+                        })
+                except ValueError:
+                    pass
+            rows.append(row)
 
     params = pd.DataFrame(rows)
     if params.empty:
         return params
-    params = params.dropna().reset_index(drop=True)
+    # Keep the union of ellipse-valid and hull-valid bodies. The previous
+    # blanket dropna() is scoped to the ellipse block so a degenerate hull no
+    # longer discards a good ellipse row (and vice versa).
+    ell_cols = ["r2", "x0", "y0", "a", "b", "phi"]
+    if ahull:
+        ell_ok = params[ell_cols].notna().all(axis=1)
+        hull_ok = params["ahull_size"].notna()
+        params = params[ell_ok | hull_ok].reset_index(drop=True)
+    else:
+        params = params.dropna(subset=ell_cols).reset_index(drop=True)
     return params
 
 
 def _clean_rf_params(params_df):
-    """Apply the cleaning step from legacy `compute_clean_rf_params`:
+    """Apply the RF-param cleaning step:
     clip r2 to [-1, 1], clip a/b to [0.5, inf), derive size / ecc / cell_type.
     """
     df = params_df.copy()
@@ -289,13 +483,17 @@ def get_rf_raw_ol(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
     in_instances: list[str] | None = None, force: bool = False,
 ) -> pd.DataFrame:
-    """Per-body OL receptive-field fits.
+    """Per-body OL receptive-field fits (2D-Gaussian ellipse + alpha hull).
 
-    Fits a 2D Gaussian on the effective-weight RF from visual inputs
-    (L1/L2/L3/R7/R8 by default) onto every non-visual-input OL instance on
-    the selected side, via the OL-subset `lat_flow_sum`. Params are cleaned
-    (`_clean_rf_params`) and merged with per-instance flow (hitting_time,
-    main_groups, sign).
+    Fits a 2D Gaussian AND an alpha hull on the effective-weight RF from visual
+    inputs (L1/L2/L3/R7/R8 by default) onto every non-visual-input OL instance
+    (VIN + VPN) on the selected side, via the OL-subset `lat_flow_sum`.
+    Both reductions come from one propagation pass per body (see
+    `_compute_rf_params`). Params are cleaned (`_clean_rf_params`) and merged
+    with per-instance flow (hitting_time, main_groups, sign). Carries the ellipse
+    columns (size, r2, x0, y0, a, b, phi, ...) plus the alpha-hull columns
+    (ahull_size, ahull_com_x/y, ahull_kept_points, ahull_rmfrac, ahull_alpha),
+    per-neuron `idx` (full-brain), and `region` ('<side> OL').
     """
     def _compute():
         ol_meta = get_ol_meta(dataset=dataset, data_dir=data_dir, side_char=side_char)
@@ -317,6 +515,7 @@ def get_rf_raw_ol(
             flow_type[["cell_type", "main_groups", "sign", "hitting_time"]].drop_duplicates("cell_type"),
             on="cell_type", how="left",
         )
+        params["region"] = f"{_SIDE_WORD[side_char]} OL"
         return params
 
     return cached_parquet(
@@ -337,6 +536,10 @@ def get_rf_type_ol(
 
     def _compute():
         raw = get_rf_raw_ol(dataset=dataset, data_dir=data_dir, side_char=side_char)
+        # Ellipse aggregation uses only Gaussian-valid bodies; the raw parquet
+        # now also carries hull-only rows (NaN ellipse) that must not skew the
+        # per-instance median / n_neurons.
+        raw = raw[raw["size"].notna()]
         dir_type = get_ol_type_directedness(
             dataset=dataset, data_dir=data_dir, side_char=side_char,
         )
@@ -428,7 +631,7 @@ def get_rf_connectivity_edges_ol(
 def _rf_type_sx_sy(df):
     """Rotate (a, b) back to horizontal / vertical semi-axes based on phi.
     Scale factor `sqrt(sqrt(3)/2)` converts hex-column units to column-radius
-    units (legacy convention). Returns (sx, sy) as numpy arrays.
+    units. Returns (sx, sy) as numpy arrays.
     """
     fac = np.sqrt(np.sqrt(3) / 2)
     horizontal = np.abs(df["phi"]) < np.pi / 4
@@ -439,7 +642,7 @@ def _rf_type_sx_sy(df):
 
 def _synthetic_visual_input_prop(side_char: str) -> pd.DataFrame:
     """Synthetic propagated-RF rows for visual-input seeds (L1/L2/L3) using
-    the legacy convention: `size=1` column, `sx=sy=1/sqrt(pi)` (unit-area
+    the convention `size=1` column, `sx=sy=1/sqrt(pi)` (unit-area
     circular RF), `phi=0`. Used by `get_rf_comparison_type` so RF-size
     comparisons can include visual inputs as a lower-bound reference."""
     suffix = "_R" if side_char == "r" else "_L"
@@ -505,8 +708,8 @@ def get_input_rf_raw_ol(
     `effective weight`, with `amp = sum(effective weight)`. Cleaned via
     `_clean_rf_params`, cached as parquet.
 
-    The raw parquet is produced by `setup_data.setup_data.fetch_input_syn_per_col`
-    (called from `setup_malecns_data.ipynb` section 6). If you rerun the
+    The raw parquet is produced by `lib/malecns.fetch_input_syn_per_col`
+    (called from `base_cache/s1_malecns_data.ipynb` section 6). If you rerun the
     download, pass `force=True` to invalidate this cache.
     """
     from utils.external_rf import fit_rf_gaussian
@@ -643,6 +846,24 @@ def get_rf_comparison_type(
     )
 
 
+def rebuild_input_rf_caches(
+    *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
+    force: bool = True,
+) -> None:
+    """Force-rebuild the four input-RF derived caches in dependency order.
+
+    Run after re-fetching the input syn-per-column parquet (base_cache
+    s1_malecns_data section 6) or changing the RF-fitting code. Normal figure
+    rendering does not need this: each get_* below lazily builds and caches on
+    first call. Order matters -- rebuilding a comparison cache on top of a
+    stale raw/type cache would give wrong results.
+    """
+    get_input_rf_raw_ol(dataset=dataset, data_dir=data_dir, side_char=side_char, force=force)
+    get_input_rf_type_ol(dataset=dataset, data_dir=data_dir, side_char=side_char, force=force)
+    get_rf_comparison_body(dataset=dataset, data_dir=data_dir, side_char=side_char, force=force)
+    get_rf_comparison_type(dataset=dataset, data_dir=data_dir, side_char=side_char, force=force)
+
+
 def get_experimental_rf_sizes(
     *, dataset: str = DATASET, data_dir=DATA_DIR,
     source_file: str = "TableS2_experimental_data.xlsx",
@@ -677,10 +898,14 @@ def get_rf_raw_cb(
     vic_thre: float = 5e-4, in_instances: list[str] | None = None,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Per-body CB receptive-field fits for VCBN instances (VIC > vic_thre).
+    """Per-body CB receptive-field fits for VCBN instances (VIC > vic_thre):
+    2D-Gaussian ellipse + alpha hull from one propagation pass per body.
 
     Uses the full `lat_flow_sum.npz` (not OL-only). Heavy first-run compute.
-    Output instances come from `get_vcbn_types`.
+    Output instances come from `get_vcbn_types`. Carries the ellipse columns
+    (size, r2, x0, y0, a, b, phi, ...) plus the alpha-hull columns (ahull_size,
+    ahull_com_x/y, ahull_kept_points, ahull_rmfrac, ahull_alpha), per-neuron
+    `idx` (full-brain), region, VIC, hitting_time, sign and main_groups.
     """
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
@@ -737,6 +962,9 @@ def get_rf_type_cb(
         )
         if raw.empty:
             return raw
+        # ellipse aggregation over Gaussian-valid bodies only (hull-only rows
+        # carry NaN ellipse params)
+        raw = raw[raw["size"].notna()]
         agg = (
             raw.groupby(["instance", "seed"])[["n_col", "r2", "a", "b", "phi", "amp"]]
                .median().reset_index()
@@ -784,33 +1012,29 @@ def get_rf_ahull_neuron(
 ) -> pd.DataFrame:
     """Per-neuron alpha-hull RF size for Main Fig. 6b.
 
-    One row per neuron, pooling OL intrinsic neurons
-    (`meta_ON_ahull_cumsum60.pkl`) with VPNs & VCBNs
-    (`meta_VP_CB_ahull_cumsum60.pkl`). `ahull_size` is the cumsum-60 alpha hull
+    One row per neuron, pooling VIN + VPN neurons (`get_rf_raw_ol`,
+    `main_groups` in {'VIN', 'VPN'}) with VCBNs
+    (`get_rf_raw_cb`). VCN OL neurons are excluded (they are
+    already absent from the VCBN set). `ahull_size` is the cumsum-60 alpha hull
     in column² (×25 → deg² inside `plot_rf_size_per_layer`). Per-neuron
-    `hitting_time` is joined from the flow table (`get_flow`) by `idx`; neurons
-    with no flow hitting time or no finite ahull are dropped. `region` is
-    anatomical: 'right OL'/'left OL' for the OL pkl (by `side`), the stored
-    region for VPN/CB.
+    `hitting_time` is joined from the flow table (`get_flow`) by full-brain
+    `idx`; neurons with no flow hitting time or no finite ahull are dropped.
+    `region` is 'right OL'/'left OL' for the OL side, 'CB' for VCBN.
 
     Keeps per-neuron resolution (every neuron of a type contributes its own
-    hull), unlike the per-instance `get_rf_types_combined`.
+    hull), unlike the per-instance `get_rf_types_combined`. Derives from the
+    combined RF parquet, so it needs no separate alpha-hull cache.
     """
-    import pickle
-    from utils.config import CACHE_PROC_DIR
     from utils.core_data import get_flow
 
-    cols = ["bodyId", "idx", "instance", "cell_type", "ahull_size"]
-    with open(CACHE_PROC_DIR / "meta_ON_ahull_cumsum60.pkl", "rb") as fh:
-        on = pickle.load(fh)
-    on = on[cols + ["side"]].copy()
-    on["region"] = on["side"].astype(str) + " OL"
-    on = on.drop(columns="side")
-    with open(CACHE_PROC_DIR / "meta_VP_CB_ahull_cumsum60.pkl", "rb") as fh:
-        vp = pickle.load(fh)
-    vp = vp[cols + ["region"]].copy()
+    cols = ["bodyId", "idx", "instance", "cell_type", "ahull_size", "region"]
+    ol = get_rf_raw_ol(dataset=dataset, data_dir=data_dir, side_char=side_char)
+    ol = ol[ol["main_groups"] != "VCN"][cols].copy()
+    cb = get_rf_raw_cb(dataset=dataset, data_dir=data_dir, side_char=side_char)
+    cb = cb[cols].copy()
+    cb["region"] = "CB"
 
-    nrn = pd.concat([on, vp], ignore_index=True).dropna(subset=["ahull_size"])
+    nrn = pd.concat([ol, cb], ignore_index=True).dropna(subset=["ahull_size"])
     flow_ht = (
         get_flow(dataset=dataset, data_dir=data_dir, side_char=side_char)
         .set_index("idx")["hitting_time"]
@@ -821,28 +1045,30 @@ def get_rf_ahull_neuron(
 
 def get_rf_ahull_type_cb(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
+    vic_thre: float = 5e-4,
 ) -> pd.DataFrame:
-    """Per-instance median alpha-hull RF size for VPN + VCBN, from
-    `meta_VP_CB_ahull_cumsum60.pkl`.
+    """Per-instance median alpha-hull RF size for VPN + VCBN.
 
-    One row per instance with median `ahull_size` (col², ×25 → deg²), median
-    `hitting_time`, `region` ('right OL' for VPN, 'CB' for VCBN) and
-    `main_groups`. Replaces the 2D-Gaussian `size` used in the CB RF-size SI
-    panels (SI Fig. 10b/c/d). Per-instance companion to the per-neuron
-    `get_rf_ahull_neuron` (Main Fig. 6b); both read the same alpha-hull cache,
-    so neither depends on the 2D-Gaussian fits.
-
-    `dataset`/`data_dir`/`side_char` are accepted for signature parity with the
-    sibling RF getters; the cache filename is fixed (not dataset-tagged).
+    VPN from `get_rf_raw_ol` (`main_groups == 'VPN'`), VCBN from
+    `get_rf_raw_cb`. One row per instance with median `ahull_size` (col²,
+    ×25 → deg²), median `hitting_time`, `region` ('right OL' for VPN, 'CB' for
+    VCBN) and `main_groups`. Replaces the 2D-Gaussian `size` used in the CB
+    RF-size SI panels (SI Fig. 10b/c/d). Per-instance companion to the
+    per-neuron `get_rf_ahull_neuron` (Main Fig. 6b); both derive from the
+    combined RF parquet, so neither needs a separate alpha-hull cache.
     """
-    import pickle
-    from utils.config import CACHE_PROC_DIR
+    vpn = get_rf_raw_ol(dataset=dataset, data_dir=data_dir, side_char=side_char)
+    vpn = vpn[vpn["main_groups"] == "VPN"].copy()
+    vcbn = get_rf_raw_cb(
+        dataset=dataset, data_dir=data_dir, side_char=side_char, vic_thre=vic_thre,
+    ).copy()
+    vcbn["region"] = "CB"
 
-    with open(CACHE_PROC_DIR / "meta_VP_CB_ahull_cumsum60.pkl", "rb") as fh:
-        vp = pickle.load(fh)
-    vp = vp.dropna(subset=["ahull_size"])
+    cols = ["instance", "ahull_size", "hitting_time", "region", "main_groups"]
+    both = pd.concat([vpn[cols], vcbn[cols]], ignore_index=True)
+    both = both.dropna(subset=["ahull_size"])
     return (
-        vp.groupby("instance")
+        both.groupby("instance")
         .agg(
             ahull_size=("ahull_size", "median"),
             hitting_time=("hitting_time", "median"),

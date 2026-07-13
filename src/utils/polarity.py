@@ -5,10 +5,6 @@ Hosts:
 - OL-side feature-vector + polarity prediction: `get_ol_polarity_comparison`
 - CB-side counterpart: `get_cb_polarity_comparison`
 - Private helper `_split_polarity_types`, alias table `_POLARITY_INSTANCE_ALIASES`.
-
-Moved out of `setup_data/_preprocessing.py` in Phase E.5. (Note: the
-`_split_polarity_types` definition was previously lost in Phase E.2's
-extraction helper bug; restored here.)
 """
 import re
 
@@ -18,8 +14,14 @@ import scipy.sparse as sp
 
 from utils.cache import cached_parquet
 from utils.config import DATA_DIR, DATASET, PARAMS_DIR, SIDE_CHAR
-from utils.core_data import _SIDE_WORD, get_meta, get_ol_flow_type, get_ol_meta
-from utils.ol_data import _compute_feature_vectors, get_ol_stepsn_sum
+from utils.core_data import (
+    _SIDE_WORD,
+    get_meta,
+    get_ol_flow_type,
+    get_ol_meta,
+    grouped_effweight,
+)
+from utils.ol_data import get_ol_stepsn_sum
 
 
 def _split_polarity_types(cell) -> list[str]:
@@ -243,7 +245,7 @@ def get_ol_polarity_comparison(
     zero), then averaged over the cell types sharing one spreadsheet entry, so
     each entry is a single bar (e.g. `T4*` -> one `T4` bar, the mean of
     T4a..T4d). Seed inputs are every instance with `hitting_time == 0` in
-    `get_ol_flow_type` — legacy behaviour (includes L1/L2/L3, R7/R7p/R7y,
+    `get_ol_flow_type` (includes L1/L2/L3, R7/R7p/R7y,
     R8/R8p/R8y, R7d/R8d, HBeyelet). Uses OL `lat_flow_sum` (fast, OL-only).
     """
     def _compute():
@@ -264,8 +266,9 @@ def get_ol_polarity_comparison(
         outidx = ol_meta[ol_meta.instance.isin(labels["instance"].values)].idx.values
 
         idx_to_instance = dict(zip(ol_meta.idx, ol_meta.instance))
-        feat = _compute_feature_vectors(
+        feat = grouped_effweight(
             stepsn, inidx, outidx, idx_to_instance, idx_to_instance,
+            combining_method="median",
         )
         feat = feat.loc[feat.index.isin(labels["instance"].values)]
         row_sum = feat.sum(axis=1)

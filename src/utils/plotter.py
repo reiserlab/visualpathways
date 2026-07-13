@@ -1,6 +1,8 @@
 import pickle
 import io
 import os
+import re
+import unicodedata
 from pathlib import Path
 import logging
 from typing import Union
@@ -28,9 +30,33 @@ import navis.interfaces.neuprint as neu
 import cloudvolume as cv
 
 from utils.ng_view import NG_View
-from utils.helper import slugify
 
 logging.getLogger('navis').setLevel(logging.WARN)
+
+
+def slugify(value, to_lower=True, allow_unicode=False):
+    """
+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
+    dashes to single dashes. Remove characters that aren't alphanumerics,
+    underscores, or hyphens. Convert to lowercase. Also strip leading and
+    trailing whitespace, dashes, and underscores.
+
+    original source: https://docs.djangoproject.com/en/4.1/_modules/django/utils/text/#slugify
+    """
+    value = str(value)
+    if allow_unicode:
+        value = unicodedata.normalize("NFKC", value)
+    else:
+        value = (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+    value = re.sub(r"[\(\)]", "_", value)
+    value = re.sub(r"[^\w\s-]", "", value)
+    if to_lower:
+        value = value.lower()
+    return re.sub(r"[-\s]+", "-", value)
 
 def get_synapses(
     body_id:int

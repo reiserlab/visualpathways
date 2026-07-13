@@ -15,10 +15,8 @@ Hosts:
 - Left/right clustering sweeps (`get_ol_lr_sweep`,
   `get_ol_lr_cluster_match`)
 - Private helpers co-located with their `get_*` wrapper:
-  `_compute_directedness`, `_compute_feature_vectors`,
-  `_compute_hierarchical_clustering`, `_compute_participation`.
-
-Moved out of `setup_data/_preprocessing.py` in Phase E.2.
+  `_compute_directedness`, `_compute_hierarchical_clustering`,
+  `_compute_participation`.
 """
 import numpy as np
 import pandas as pd
@@ -30,6 +28,7 @@ from utils.core_data import (
     _ensure_ol_sidecars,
     _grouped_paths,
     _swap_lr_suffix,
+    grouped_effweight,
     get_flow,
     get_flow_per_group,
     get_full_prop,
@@ -88,7 +87,6 @@ def get_ol_connectivity(
 def _compute_directedness(conn_df: pd.DataFrame, hit_diff_thre: float = 0.5) -> pd.DataFrame:
     """Per-pre-neuron fractions of feedforward / feedback / lateral weight.
 
-    Migrated from legacy `computing_functions.compute_directedness`.
     Requires `conn_df` to already have `hitting_time_diff` and `frac` columns.
     """
     dir_ff = (
@@ -255,23 +253,6 @@ def get_ol_roi_adjacency(
 
     return cached_parquet(f"{dataset}_OL_{side_char}_roi_adjacency", _compute, force=force)
 
-def _compute_feature_vectors(stepsn, inidx, outidx, inidx_map, outidx_map) -> pd.DataFrame:
-    """Migrated from legacy `computing_functions.compute_feature_vectors`.
-
-    For each output neuron, the feature is the median (across same-instance
-    output neurons) of the row-summed effective input weight from each input
-    instance. Result: rows = output instances, cols = input instances.
-    """
-    in_out_df = pd.DataFrame(
-        data=stepsn[:, outidx][inidx, :].toarray(),
-        index=[str(inidx_map[k]) for k in inidx],
-        columns=outidx,
-    )
-    in_out_df = in_out_df.groupby(in_out_df.index).sum()
-    in_out_df.columns = [str(outidx_map[k]) for k in in_out_df.columns]
-    in_out_df = in_out_df.T.groupby(level=0).median().T
-    return in_out_df.T
-
 
 def get_ol_features(
     *, dataset: str = DATASET, data_dir=DATA_DIR, side_char: str = SIDE_CHAR,
@@ -286,7 +267,10 @@ def get_ol_features(
         out_inst = ol_meta[ol_meta.main_groups == "VPN"].instance.unique()
         inidx = ol_meta[ol_meta.instance.isin(in_inst)].idx.values
         outidx = ol_meta[ol_meta.instance.isin(out_inst)].idx.values
-        feat = _compute_feature_vectors(stepsn, inidx, outidx, idx_to_instance, idx_to_instance)
+        feat = grouped_effweight(
+            stepsn, inidx, outidx, idx_to_instance, idx_to_instance,
+            combining_method="median",
+        )
         feat.index.name = "instance"
         return feat.reset_index()
 
@@ -402,7 +386,6 @@ def get_ol_connectivity_pathways(
     """Pathway-level connectivity matrices (full + e/i breakdowns) and their diagonals.
 
     Returns a dict {'conn': list[5][N+2,N+2], 'diag': list[5][N+2]} (cached as pickle).
-    Migrated from legacy `computing_functions.compute_connectivity_pathways`.
     """
     from utils.cache import cached_pickle
     from connectome_interpreter.compress_paths import result_summary
@@ -705,7 +688,7 @@ def get_participation_paths(
     """Effective-weight paths from `instance` → `out_main_group` in OL, for each
     path length 1..ceil(max(out_hit) - hit[instance]).
 
-    `outprop=False` (default, matches legacy) — input-normalised edges.
+    `outprop=False` (default) — input-normalised edges.
     `outprop=True` — output-normalised edges.
     """
     def _compute():
@@ -829,8 +812,8 @@ def get_ol_lr_cluster_match(
 ):
     """L↔R cluster confusion matrix + Hungarian assignment at fixed frac_thre.
 
-    L instance names are flipped `_L`→`_R` before merging on `instance`,
-    mirroring the legacy approach. Returns a dict
+    L instance names are flipped `_L`→`_R` before merging on `instance`.
+    Returns a dict
     `{confusion, row_ind, col_ind, n_clu_L, n_clu_R, tick_labels}`.
     """
     from utils.cache import cached_pickle

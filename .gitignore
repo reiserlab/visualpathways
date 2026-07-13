@@ -19,6 +19,7 @@ results/*
 !results/html_figures/
 !results/tables/
 results_left/
+results_resub/
 private/
 src/private/
 

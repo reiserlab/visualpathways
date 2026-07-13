@@ -1,10 +1,4 @@
-"""Hardcoded colour palettes used by paper-figure renderers.
-
-Moved out of `utils/loading_functions.py` in Phase C as the last step before
-that legacy module is deleted. Other unused colour/dataset loaders from the
-legacy module (`load_nt_colors`, `load_borst_data`, etc.) had no external
-callers and were dropped.
-"""
+"""Hardcoded colour palettes used by paper-figure renderers."""
 import matplotlib.colors as mcolors
 import pandas as pd
 

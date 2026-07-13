@@ -13,8 +13,6 @@ Hosts:
   `get_ol_to_cb_weights`)
 - ROI coverage (`get_ol_roi_coverage`, originally bound for ol_data but
   depends on vic so moved here alongside the other late-stage analyses)
-
-Moved out of `setup_data/_preprocessing.py` in Phase E.6.
 """
 import numpy as np
 import pandas as pd
@@ -32,11 +30,11 @@ from utils.core_data import (
     get_meta,
     get_ol_meta,
     get_sector_map,
+    grouped_effweight,
     is_cb_neuron,
 )
 from utils.ol_data import (
     _compute_directedness,
-    _compute_feature_vectors,
     _compute_hierarchical_clustering,
     _compute_participation,
     get_ol_clusters,
@@ -106,8 +104,7 @@ def get_cb_directedness(
 ) -> pd.DataFrame:
     """Per-neuron feedforward / feedback / lateral fractions for VCBN pre connections.
 
-    Legacy nb 8 cell 26. `main_groups_pre` is overridden to `'nonOL'` to match
-    legacy cell 27.
+    `main_groups_pre` is overridden to `'nonOL'`.
     """
     def _compute():
         conn_cb = get_cb_connectivity(
@@ -183,8 +180,9 @@ def get_cb_features(
         inidx = meta[meta.instance.isin(in_inst)].idx.values
         outidx = meta[meta.instance.isin(out_inst)].idx.values
         idx_to_instance = dict(zip(meta.idx, meta.instance))
-        feat = _compute_feature_vectors(
+        feat = grouped_effweight(
             stepsn, inidx, outidx, idx_to_instance, idx_to_instance,
+            combining_method="median",
         )
         # Drop VCBN rows where ALL visual input columns are NaN (no propagation at all)
         vis_cols = [c for c in feat.columns if c in set(in_inst)]
@@ -324,8 +322,8 @@ def get_cb_lr_cluster_match(
     `criterion='maxclust'` (useful when the L-side distance cutoff skips the
     desired count due to ties). Otherwise uses `frac_thre` on both sides.
 
-    Left instance names are flipped `_L`↔`_R` before merging on instance,
-    mirroring the legacy approach. Returns
+    Left instance names are flipped `_L`↔`_R` before merging on instance.
+    Returns
     `{confusion, row_ind, col_ind, n_clu_L, n_clu_R, x_tick_labels,
     y_tick_labels, tick_labels}`. The confusion matrix is rectangular when
     the left and right sides have different cluster counts.
@@ -383,7 +381,7 @@ def get_ol_in_cb_participation(
 
     Mirrors `_compute_participation` but restricts neurons to VPNs on
     the chosen side + CB VCBN instances, and the target clusters are CB
-    clusters. Legacy nb 8 cell 23.
+    clusters.
     """
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
@@ -461,7 +459,7 @@ def get_cb_cluster_tbars_per_roi(
 ) -> pd.DataFrame:
     """Per-(CB-cluster, ROI) tbar count wide df (clusters × ROI) for the
     `cb_clusters_rois` heatmap. Merges `tbar_VIC_forJudith.pkl` with CB
-    cluster assignments via bodyId → instance → cluster. Legacy nb 8 c 103."""
+    cluster assignments via bodyId → instance → cluster."""
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
         cb_clu = get_cb_clusters(
@@ -545,7 +543,7 @@ def get_ol_cb_cluster_connectivity(
 
     Aggregates per-body effective weights by cluster membership on both
     sides, returning a dense `(n_ol_clu, n_cb_clu)` DataFrame indexed/colored
-    by cluster id. Legacy nb 8 cell 22.
+    by cluster id.
     """
     from utils.cache import cached_pickle
     from connectome_interpreter.compress_paths import result_summary
@@ -606,7 +604,6 @@ def get_cb_layer_lr_homologue(
     Per side: median hitting_time per instance, strip `_R`/`_L` suffix to
     cell_type, keep the variant with the **min** hitting_time (earliest
     layer). Inner-merge on cell_type gives one row per bilateral homologue.
-    Legacy nb 9 cells 6 + 20.
     """
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)

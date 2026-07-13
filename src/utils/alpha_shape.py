@@ -4,9 +4,8 @@ Generic 2D concave-hull (alpha shape) geometry utilities.
 These are domain-agnostic geometric helpers: computing an alpha shape (concave
 hull) from a set of 2D points, ordering its boundary components, the triangle
 circumradius test used by the alpha criterion, and a ray/boundary intersection
-helper. They depend only on numpy/scipy/shapely and are shared by the receptive
-field metrics (:mod:`utils.rf_metrics`) and retinotopic color mapping
-(:mod:`utils.retino_color`).
+helper. They depend only on numpy/scipy/shapely and are used by the receptive
+field metrics (:mod:`utils.ol_rf`).
 """
 
 import warnings
@@ -197,32 +196,3 @@ def order_boundaries(edges, points):
         all_boundaries_idx.append(boundary)
 
     return all_boundaries
-
-
-def ray_intersection_with_boundary(pt, boundary_alpha):
-    """
-    Given a point (pt), compute the intersection of the ray from (0,0) to pt with the alpha shape boundary.
-    Returns the intersection point as (x, y) or nearest point if no intersection.
-    """
-    ray = shapely.geometry.LineString([(0, 0), pt])
-    boundary = boundary_alpha.boundary
-    intersection = ray.intersection(boundary)
-    if intersection.is_empty:
-        print("No intersection, return nearest point instead.")
-        # If no intersection, find the nearest point on the boundary to the ray
-        nearest = shapely.ops.nearest_points(ray, boundary)
-        return (nearest[1].x, nearest[1].y)
-    # If multiple points, take the one closest to the origin (excluding the origin itself)
-    if intersection.geom_type == 'MultiPoint':
-        points = [p for p in intersection.geoms if not (p.x == 0 and p.y == 0)]
-        if not points:
-            return None
-        # Sort by distance from origin
-        points = sorted(points, key=lambda p: (p.x**2 + p.y**2))
-        return (points[0].x, points[0].y)
-    elif intersection.geom_type == 'Point':
-        if intersection.x == 0 and intersection.y == 0:
-            return None
-        return (intersection.x, intersection.y)
-    else:
-        return None

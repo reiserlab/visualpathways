@@ -1,9 +1,9 @@
 # %%
-"""Plotting functions grouped by legacy notebook (1..11).
+"""Plotting functions grouped into sections (1..11) by figure group.
 
 Each section hosts plot_* functions for the corresponding figure group.
-Functions consume cached artefacts (loaded via `preprocessing.py`) and write
-figures to `FIG_DIR / <section>/`.
+Functions consume cached artefacts (loaded via the `utils` data modules) and
+write figures to `FIG_DIR / <section>/`.
 """
 import re
 from pathlib import Path
@@ -453,7 +453,7 @@ def _eyesymbol(color_segments):
         (-np.pi / 4, np.pi / 4), (np.pi / 4, 3 * np.pi / 4),
         (3 * np.pi / 4, 5 * np.pi / 4), (5 * np.pi / 4, 7 * np.pi / 4),
     ]
-    # legacy index mapping: outer wedges (R, U, L, D) draw from sectors 3, 2, 1, 4
+    # index mapping: outer wedges (R, U, L, D) draw from sectors 3, 2, 1, 4
     wedge_colors = [color_segments[2], color_segments[1], color_segments[0], color_segments[3]]
     fig = go.Figure()
     for (start, end), color in zip(wedges, wedge_colors):
@@ -548,8 +548,10 @@ def plot_pathway(
 
     `paths_dict` is the output of `pre.get_paths_to_instance` /
     `pre.get_participation_paths` / `pre.get_cb_paths_to_instance`.
-    Filter thresholds are applied here (not cached). Returns the rendered
-    `conn_paths_frac` (0 if no surviving paths).
+    Filter thresholds are applied here (not cached). Returns
+    `(conn_paths_frac, fig)` — the rendered displayed-path weight fraction
+    (0.0 if no surviving paths) and the matplotlib figure (`None` when no
+    figure was drawn, i.e. on the early-exit paths).
 
     When `top_n` is set, selection switches to the strongest `top_n` paths
     (via `filter_all_paths_to_top_n`) instead of the `thre_cumsum`
@@ -563,7 +565,7 @@ def plot_pathway(
     hit_inst = paths_dict['hit_inst']
     if not all_paths:
         print(f'no paths for {instance}')
-        return 0.0
+        return 0.0, None
 
     if figsize is None:
         figsize = (1.5 + hit_inst * 3, 8)
@@ -584,12 +586,12 @@ def plot_pathway(
         dfs = [p for p in filtered if p is not None and not p.empty]
         if not dfs:
             print(f'no surviving paths for {instance} after filter')
-            return conn_paths_frac
+            return conn_paths_frac, None
         paths_df = pd.concat(dfs, axis=0)
     else:
         if filtered is None or filtered.empty:
             print(f'no surviving paths for {instance} after filter')
-            return conn_paths_frac
+            return conn_paths_frac, None
         paths_df = filtered
 
     paths_df = paths_df[['pre', 'post', 'weight']].drop_duplicates()
@@ -672,10 +674,11 @@ def plot_inventory_full_brain(
     dataset: str = DATASET,
     save_dir: Path | None = None,
 ):
-    """Pie charts of neurons and cell types by region (full brain minus left OL).
+    """Pie charts of neurons and cell types by region (full brain).
 
-    `colors`: {'region': series/dict of color by region}.
-    Returns list of (fig, filename) pairs.
+    The neuron pie keeps left/right OL as separate wedges; the types pie merges
+    them into one "OL" wedge (see below). `colors`: {'region': series/dict of
+    color by region}. Returns list of (fig, filename) pairs.
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "inventory"
     m_all = meta[meta.region != "other"]
@@ -687,8 +690,15 @@ def plot_inventory_full_brain(
     fig.update_layout(showlegend=False)
     figs.append((fig, f"{dataset}_neuron_region_pie.pdf"))
 
-    count_type_df = m_all.groupby("region")["cell_type"].nunique().to_frame(name="count").reset_index()
-    fig = _pie(count_type_df, "count", "region", cmap, height=350, width=350)
+    # Types-by-region pie (main_1_d_3): merge left + right OL into a single
+    # "OL" wedge, coloured like right OL. Cell types are bilaterally shared, so
+    # nunique over the merged region ~= one side's type count (not the sum).
+    m_types = m_all.assign(
+        region=m_all["region"].replace({"left OL": "OL", "right OL": "OL"})
+    )
+    cmap_ol = {**cmap, "OL": cmap["right OL"]}
+    count_type_df = m_types.groupby("region")["cell_type"].nunique().to_frame(name="count").reset_index()
+    fig = _pie(count_type_df, "count", "region", cmap_ol, height=350, width=350)
     fig.update_layout(showlegend=False)
     figs.append((fig, f"{dataset}_types_region_pie_all.pdf"))
 
@@ -1099,8 +1109,8 @@ def plot_flow_numerous_type_boxes(
     groups: list[tuple[int, int]] = ((100, 2000), (28, 100)),
     height: int = 3000,
 ):
-    """Box plots across **all** numerous cell types (legacy nb 2 `numerous{1,2}`
-    cells). For each `(n_min, n_max)` group: hitting-time box + frac_ff/fb/la
+    """Box plots across **all** numerous cell types.
+    For each `(n_min, n_max)` group: hitting-time box + frac_ff/fb/la
     boxes with a black marker per type indicating its dominant direction.
     Default groups: (100, 2000] and (28, 100] per neuron count.
     """
@@ -2329,10 +2339,16 @@ def plot_vcn_input_pie(
 
     plot_df = breakdown[breakdown["pct"] >= min_pct].copy()
     plot_order = [c for c in col_order if c in set(plot_df["category"])]
+    # Order the slices by explicitly sorting the rows rather than passing
+    # px.pie's category_orders: plotly >=6 (narwhals backend) crashes in
+    # process_dataframe_pie when category_orders is set (hardcoded 'b' column).
+    # With sort=False below, this row order is preserved in slices and legend.
+    _rank = {c: i for i, c in enumerate(plot_order)}
+    plot_df = plot_df.sort_values("category", key=lambda s: s.map(_rank))
 
     fig = px.pie(
         plot_df, values="synapses", names="category", color="category",
-        color_discrete_map=cmap, category_orders={"category": plot_order},
+        color_discrete_map=cmap,
         title=f"Synapses into {side_word} VCNs by presynaptic category (>={min_pct:g}%)",
     )
     fig.update_traces(sort=False, textposition="inside", texttemplate="%{percent:.0%}")
@@ -2604,7 +2620,7 @@ def plot_polarity_stacked_bars(
 ):
     """Stacked bars of normalised visual-input effective weight per instance,
     colored by visual-input seed. Instance labels on the x-axis are bolded
-    when the ground-truth `polarity` column is `'OFF'` (legacy convention).
+    when the ground-truth `polarity` column is `'OFF'` (by convention).
     Display names are shortened via `_POLARITY_DISPLAY_RENAMES` for ticktext
     only — the underlying `out type` category keeps the full name so the bar
     ordering is unambiguous. Width defaults to ~35 px per instance + padding."""
@@ -2724,6 +2740,77 @@ def plot_rf_example(
 
 
 # %%
+def plot_rf_estimated_overlay(
+    ol_meta: pd.DataFrame, stepsn, params_all_df: pd.DataFrame,
+    example_bid: int, in_instances: list[str],
+    *, dataset: str = DATASET, save_dir: Path | None = None,
+    thr_mode: str = "cumsum", remove_frac: float = 0.6, min_remove_frac: float = 0.1,
+    filename_stem: str | None = None,
+):
+    """Estimated (propagated) ARF for one body with the Gaussian ellipse AND the
+    alpha-hull overlaid -- the gallery-style RF panel (cf.
+    `gallery_vpn.make_rf_fig`), as opposed to `plot_rf_example`'s fitted-Gaussian
+    reconstruction.
+
+    Renders the raw effective-weight hex heatmap (signed `RdBu_r`, symmetric
+    about 0), overlays the fitted 2D-Gaussian ellipse (red, from `params_all_df`)
+    and the cumsum alpha-hull polygon (blue) with its centre-of-mass cross. The
+    hull uses the same `thr_mode`/`remove_frac`/`min_remove_frac` as
+    `ol_rf._compute_rf_params`, so the drawn hull matches the reported
+    `ahull_size`. Saves `<dataset>_<filename_stem>.pdf` (+ `.html` sidecar) and
+    returns the figure, or None if the RF is empty. If the hull is not a single
+    polygon the ellipse panel is still saved without the hull (warning printed).
+    """
+    from connectome_interpreter.external_map import hex_heatmap
+    from utils.ol_rf import compute_rf, count_col_ahull
+
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
+    if filename_stem is None:
+        filename_stem = f"example_{example_bid}_rf_fit"
+
+    inidx = ol_meta[ol_meta.instance.isin(in_instances)].idx.values
+    outidx = ol_meta[ol_meta.bodyId == example_bid].idx.values
+    df = compute_rf(ol_meta, stepsn, inidx, outidx)
+    if df.empty:
+        return None
+    tot_max = float(np.abs(df["effective weight"]).max())
+    orig = df.set_index("coords")[["effective weight"]]
+    orig = orig[~orig.index.duplicated()]
+    fig = hex_heatmap(
+        orig, custom_colorscale="RdBu_r",
+        global_min=-tot_max, global_max=tot_max, dataset="mcns_right",
+    )
+
+    row = params_all_df.loc[params_all_df["bodyId"] == example_bid]
+    if not row.empty:
+        _add_gaussian_ellipses(fig, row, example_bid=example_bid, y_scale=np.sqrt(3))
+
+    (edge_points, edges, _area, com, _kept, _frac, _alpha) = count_col_ahull(
+        orig, thr_mode=thr_mode, remove_frac=remove_frac,
+        min_remove_frac=min_remove_frac,
+    )
+    if edges is not None and edge_points is not None and len(edge_points) == 1:
+        edge_pt = edge_points[0]
+        for j in range(len(edge_pt)):
+            p1, p2 = edge_pt[j], edge_pt[(j + 1) % len(edge_pt)]
+            fig.add_trace(go.Scatter(
+                x=[p1[0], p2[0]], y=[p1[1], p2[1]], mode="lines",
+                line=dict(color="blue", width=4), showlegend=False, hoverinfo="skip",
+            ))
+        fig.add_trace(go.Scatter(
+            x=[com[0]], y=[com[1]], mode="markers",
+            marker=dict(color="blue", size=10, symbol="cross"),
+            showlegend=False, hoverinfo="skip",
+        ))
+    else:
+        print(f"plot_rf_estimated_overlay: multiple/degenerate alpha-hull for "
+              f"bodyId {example_bid}; hull overlay skipped")
+
+    _save(fig, save_dir, f"{dataset}_{filename_stem}.pdf", html=True)
+    return fig
+
+
+# %%
 def plot_rf_positions_across_neurons(
     params_all_df: pd.DataFrame, instance: str,
     *, dataset: str = DATASET, example_bid: int | None = None,
@@ -2773,8 +2860,7 @@ def plot_input_rf_example(
     *, roi: str = "LO(R)", dataset: str = DATASET,
     save_dir: Path | None = None,
 ):
-    """Three direct-input RF figures for one example body (legacy
-    `find_direct_rfs.ipynb` cells 15/18/22):
+    """Three direct-input RF figures for one example body:
     (1) per-column post-synapse hex RF, max-normalised,
     (2) fitted 2D-Gaussian hex RF + ellipse overlay,
     (3) ellipse field over all `target_instance` fits in `roi`.
@@ -2851,7 +2937,7 @@ def plot_input_rf_example(
 
 # %%
 def _rf_axis_update(fig, col, *, axis="x"):
-    """Apply the RF-param-specific axis formatting the legacy used across every
+    """Apply the RF-param-specific axis formatting used across every
     scatter/box/histogram: log scales for amp/size/n_col, clipped ranges for
     r2/ecc, degree ticks for phi."""
     upd = fig.update_xaxes if axis == "x" else fig.update_yaxes
@@ -3337,14 +3423,14 @@ def plot_rf_size_example_comparison(
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """Scatter of direct-vs-propagated RF centre (x0, y0) and size per body for
-    one star instance. Legacy cells 7-9."""
+    one star instance."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     figs = []
     sub = comparison_body[comparison_body["instance"] == star_instance].copy()
     if sub.empty:
         return figs
     sub["bodyId"] = sub["bodyId"].astype(str)
-    # legacy: subtract 22 from y so y-range is centered around 0
+    # subtract 22 from y so y-range is centered around 0
     sub["y0_dir"] = sub["y0_dir"] - 22
     sub["y0_prop"] = sub["y0_prop"] - 22
     color_gray = pd.DataFrame(["lightgray"], columns=["color"], index=[star_instance])
@@ -3395,8 +3481,7 @@ def plot_rf_size_type_scatters(
     *, star_types: list[str] | None = None,
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Per-instance direct-vs-propagated scatters for each RF param. Legacy
-    cell 12."""
+    """Per-instance direct-vs-propagated scatters for each RF param."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     stars = list(star_types) if star_types is not None else [s + "_R" for s in _RF_STAR_OUTPUT]
     sub = comparison_type[comparison_type["main_groups"].isin(["VIN", "VPN"])].copy()
@@ -3474,10 +3559,10 @@ def plot_rf_size_vs_experiment(
     col_to_deg_size: float = 25.0, col_to_deg_axis: float = 5.0,
 ):
     """Experimental vs predicted (propagated + direct) RF size scatter, plus
-    sx/sy variants. Legacy cells 15-19.
+    sx/sy variants.
 
-    `col_to_deg_size`: degrees² per column (legacy default 25).
-    `col_to_deg_axis`: degrees per column-radius (legacy default 5).
+    `col_to_deg_size`: degrees² per column (default 25).
+    `col_to_deg_axis`: degrees per column-radius (default 5).
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     mixed = _mixed_color_df(colored_main_groups_df, colored_region_df)
@@ -3638,8 +3723,8 @@ def plot_rf_size_vs_experiment_cc(
     col_to_deg_size: float = 25.0,
 ):
     """CurrierClandinin experimental (ellipse-area) vs propagated RF size.
-    Legacy cell 23. The CC sheet no longer carries a separate `size_center`
-    measure (only `size_ellipse`), so a single ellipse-area series is plotted."""
+    The CC sheet carries only `size_ellipse` (no separate `size_center`
+    measure), so a single ellipse-area series is plotted."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
     mixed = _mixed_color_df(colored_main_groups_df, colored_region_df)
 
@@ -3689,8 +3774,7 @@ def plot_vic_cumsum(
     *, vic_thre: float = 5e-4, dataset: str = DATASET,
     save_dir: Path | None = None,
 ):
-    """Cumulative VIC histogram per region with the CB threshold reference
-    (legacy nb 8 cell 37)."""
+    """Cumulative VIC histogram per region with the CB threshold reference."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     bins = 10 ** np.linspace(-6.5, -0.2, 31)
     fig = _hist_cumsum_lines_v(
@@ -3704,13 +3788,64 @@ def plot_vic_cumsum(
 
 
 # %%
+def plot_cumfrac_by_roi(
+    curves, *, ascending: bool, xlabel: str, xlim,
+    save_dir: Path | None = None, filename: str | None = None,
+    drop_zero: bool = False, figsize=(4, 4),
+):
+    """Cumulative-fraction-vs-value curves, one line per ROI (or ROI group).
+
+    `curves` is a list of ``(label, color, values, total)``: `values` is the
+    array of the plotted quantity for that ROI's synapses and `total` its
+    normaliser (the ROI's full synapse count). Each curve is the cumulative
+    fraction of synapses at or below (`ascending=True`, a CDF) or at or above
+    (`ascending=False`, a survival curve) each observed value, ending in a black
+    dot. `drop_zero` omits a zero-valued final threshold (used by the DOB
+    panel). ROI selection / grouping is the caller's job; this only draws.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for label, color, values, total in curves:
+        vals = np.asarray(values, dtype=float)
+        vals = np.sort(vals[~np.isnan(vals)])
+        if vals.size == 0 or total <= 0:
+            continue
+        thr = np.unique(vals)                       # ascending unique values
+        if ascending:
+            cum = np.searchsorted(vals, thr, side="right")
+        else:
+            thr = thr[::-1]                          # descending thresholds
+            cum = vals.size - np.searchsorted(vals, thr, side="left")
+        if drop_zero and thr[-1] == 0:
+            thr, cum = thr[:-1], cum[:-1]
+        y = cum / total
+        ax.plot(thr, y, linewidth=2, color=color, label=label)
+        ax.plot(thr[-1], y[-1], "o", color="black", markersize=2)
+
+    ax.set_xlabel(xlabel, fontsize=12, fontweight="bold")
+    ax.set_ylabel("Cumulative Fraction", fontsize=12, fontweight="bold")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(0, 1.0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(loc="best", frameon=True)
+    fig.tight_layout()
+    if save_dir is not None and filename is not None:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_dir / filename, transparent=True, bbox_inches="tight")
+    plt.close(fig)
+    return fig
+
+
+# %%
 def plot_vic_layer_histogram(
     vic_type: pd.DataFrame, colored_region_df: pd.DataFrame,
     *, vic_thre: float = 5e-4, dataset: str = DATASET,
     save_dir: Path | None = None,
 ):
-    """Layer histogram of VCBN types (VIC > threshold) by region (legacy nb 8
-    cell 39). Requires `vic_type` to have a `hitting_time` column."""
+    """Layer histogram of VCBN types (VIC > threshold) by region.
+    Requires `vic_type` to have a `hitting_time` column."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     bins = np.arange(0.5 - 0.25 / 2, 7 + 0.25 / 2, 0.5 / 2)
     sub = vic_type[vic_type.VIC > vic_thre]
@@ -3734,8 +3869,7 @@ def plot_vic_vs_layer_scatter(
     show_highlight_labels: bool = True,
 ):
     """Scatter of VIC vs hitting_time (layer), one point per instance, colored
-    by region. Optional `highlight` list for labeled callouts (legacy nb 8
-    cells 41-42)."""
+    by region. Optional `highlight` list for labeled callouts."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     highlight = list(highlight) if highlight is not None else []
 
@@ -3757,9 +3891,9 @@ def plot_vic_vs_layer_scatter(
 
 
 # %%
-# Legacy `load_cb_cluster_types(side=...)`: full-suffix names with a
-# deliberate L/R mix per side. Keep the order exactly as in legacy so the
-# example stacked bar keeps the same left-to-right layout.
+# Full-suffix cluster-type names with a deliberate L/R mix per side. Keep the
+# order exactly as given so the example stacked bar keeps the same
+# left-to-right layout.
 _CB_CLUSTER_TYPES = {
     "r": [
         "pC1_2a_R", "LAL094_R", "IbSpsP_0", "LHPV5b3_R", "TuBu08_R",
@@ -3796,7 +3930,7 @@ def plot_cb_directedness_histograms(
 ):
     """Per-direction (ff/fb/la) fraction-of-types histogram for VCBN pre-neurons.
 
-    Legacy nb 8 cell 73. `type_dir_cb` comes from `pre.get_cb_type_directedness()`;
+    `type_dir_cb` comes from `pre.get_cb_type_directedness()`;
     `main_groups_pre` is collapsed to `'nonOL'` there, so all types share one
     colour. We build a one-row colour df that maps `'nonOL'` to the CB region
     colour.
@@ -3825,7 +3959,7 @@ def plot_cb_directedness_triangle(
 ):
     """Ternary directedness triangle (la/fb/ff) for VCBN pre-neurons.
 
-    Legacy nb 8 cell 74. Applies the legacy eps=0.05 smoothing before plotting
+    Applies the eps=0.05 smoothing before plotting
     and highlights `cluster_types` (defaults to `_CB_CLUSTER_TYPES['r']`).
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
@@ -3845,8 +3979,8 @@ def plot_cb_clusters_example_features(
     colored_seed_df: pd.DataFrame, *,
     dataset: str = DATASET, side_str: str = "", save_dir: Path | None = None,
 ):
-    """Stacked bar of normalised CB feature vector for example output types
-    (legacy nb 8 cell 56). `cluster_types` are full instance names (with
+    """Stacked bar of normalised CB feature vector for example output types.
+    `cluster_types` are full instance names (with
     side suffix) from `_CB_CLUSTER_TYPES` — L/R mix allowed."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     # Keep every requested type as an x-axis slot, in the given order. A type
@@ -3877,8 +4011,8 @@ def plot_cb_clusters_pathway_features(
     cluster_num: pd.Series, colored_seed_df: pd.DataFrame, *,
     dataset: str = DATASET, side_str: str = "", save_dir: Path | None = None,
 ):
-    """Stacked bar of per-cluster mean normalised CB feature vector
-    (legacy nb 8 cell 57). Labels right clusters as cc1..ccN and left clusters
+    """Stacked bar of per-cluster mean normalised CB feature vector.
+    Labels right clusters as cc1..ccN and left clusters
     as cc'1..cc'N, with member count."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     sub = feature_df.loc[:, in_instances] / feature_df.loc[:, in_instances].sum(1).values[:, np.newaxis]
@@ -3915,8 +4049,7 @@ def plot_ol_cb_cluster_connectivity(
 ):
     """Two heatmaps: OL-cluster × CB-cluster connectivity, input-normalised
     (each CB column sums to 1) and output-normalised (each OL row sums to 1).
-    Annotations show raw total weight (K/M) where normalised ≥ `anno_min_frac`.
-    Legacy nb 8 cells 70-71."""
+    Annotations show raw total weight (K/M) where normalised ≥ `anno_min_frac`."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
 
     def _format_total(v):
@@ -3998,7 +4131,7 @@ def plot_cb_clusters_rois(
     dataset: str = DATASET, side_str: str = "", save_dir: Path | None = None,
     roi_order: list[str] | None = None, anno_min: float = 0.1,
 ):
-    """CB-cluster × ROI normalised-tbar heatmap (legacy nb 8 c 105)."""
+    """CB-cluster × ROI normalised-tbar heatmap."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     roi_order = roi_order if roi_order is not None else _CB_ROI_ORDER
     roi_keep = [r for r in roi_order if r in tbar_counts.columns]
@@ -4008,9 +4141,16 @@ def plot_cb_clusters_rois(
     frac_shown = total_shown / total_all if total_all > 0 else 0.0
     m_norm = m.div(m.sum(0), axis=1).fillna(0)
 
+    show = m_norm.values > anno_min
+    # Guarantee at least one value per row: for any cluster row with nothing
+    # above the threshold, reveal its largest (non-zero) cell.
+    missing = ~show.any(axis=1) & (m_norm.values.max(axis=1) > 0)
+    if missing.any():
+        rows = np.nonzero(missing)[0]
+        cols = m_norm.values[rows].argmax(axis=1)
+        show[rows, cols] = True
     anno = np.where(
-        m_norm.values > anno_min,
-        np.vectorize(_fmt_km)(m.values.astype(float)), "",
+        show, np.vectorize(_fmt_km)(m.values.astype(float)), "",
     )
 
     fig = go.Figure(data=go.Heatmap(
@@ -4046,7 +4186,7 @@ def plot_cb_participation_n_clu_out(
     side_str: str = "", save_dir: Path | None = None,
 ):
     """Histogram of n_clusters (CB clusters with pi > 1/N) for VPN
-    cell types. Legacy nb 8 c 88, filename `…_in_out_n_clu_participation_out.pdf`."""
+    cell types. Output `…_in_out_n_clu_participation_out.pdf`."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
     side_word = _SIDE_WORD[side_char] if side_char in _SIDE_WORD else "right"
     sub = type_part_cb[
@@ -4076,7 +4216,7 @@ def plot_cb_clusters_graph(
     ol_highlight: list[str] | None = None,
 ):
     """igraph network of VPN types + CB clusters, edges are
-    participation ≥ 1/N. Legacy nb 8 c 99."""
+    participation ≥ 1/N."""
     import igraph as ig
     import matplotlib.pyplot as plt
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_pathways"
@@ -4157,7 +4297,7 @@ def plot_out_cb_highres_sub(
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """Subset of VPN × CB-type high-res effective-weight heatmap,
-    filtered by row/col/row2 score thresholds. Legacy nb 10 cells 44-53."""
+    filtered by row/col/row2 score thresholds."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     out_score = tb_clu_df.sum(1)
     ol_major = out_score[out_score > thre_row].index
@@ -4198,7 +4338,7 @@ def plot_rf_example_pos_par(
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """Hex heatmap for a single bodyId with Gaussian ellipse overlay
-    (legacy nb 6 c 20, `…_rf_pos_par.pdf`)."""
+    (output `…_rf_pos_par.pdf`)."""
     from connectome_interpreter.external_map import hex_heatmap
     save_dir = save_dir if save_dir is not None else FIG_DIR / "rf_fits"
     row = raw_ol[raw_ol["bodyId"] == bodyId]
@@ -4246,12 +4386,17 @@ def plot_ol_layers_hit_diff(
     # Downsample to avoid exceeding kaleido's 128 MB IPC message limit.
     _MAX_POINTS = 500_000
     if len(sub) > _MAX_POINTS:
-        sub = sub.groupby("roi", observed=True, group_keys=False).apply(
-            lambda g: g.sample(
+        # Proportional per-ROI downsample. A plain groupby loop (rather than
+        # groupby.apply) keeps the `roi` grouping column and avoids the
+        # pandas >=2.2 "apply operated on the grouping columns" FutureWarning.
+        parts = [
+            g.sample(
                 n=max(1, round(_MAX_POINTS * len(g) / len(sub))),
                 random_state=0,
             )
-        )
+            for _, g in sub.groupby("roi", observed=True)
+        ]
+        sub = pd.concat(parts)
     fig = _violin_median(
         sub, "hit_diff", "roi", labels=labels, height=height, width=width,
         xaxis_title="post - pre layer", xaxis_tickvals=[-3, -2, -1, 0, 1, 2, 3],
@@ -4270,7 +4415,7 @@ def plot_cb_layer_hist_left(
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """Horizontal histogram of left-side hitting time for VPN + CB
-    instances (legacy nb 9 cell 21)."""
+    instances."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     cmap = colored_region_df.copy()
     cmap.loc["VPN", "color"] = colored_main_groups_df.loc["VPN", "color"]
@@ -4304,7 +4449,7 @@ def plot_cb_clusters_size_vs_cluster(
     dataset: str = DATASET, save_dir: Path | None = None, jitter: float = 0.2,
     highlight: list[str] | None = None,
 ):
-    """Scatter ARF size × cluster for CB types (legacy nb 10 cell 34,
+    """Scatter ARF size × cluster for CB types (output
     `examples_size_vs_cluster_v2`).
 
     `cb_type_df` must have `instance`, `region` and a size column named
@@ -4564,8 +4709,8 @@ def plot_cb_layer_lr_homologue(
     dataset: str = DATASET, save_dir: Path | None = None,
     highlight: list[str] | None = None,
 ):
-    """Cell-type-matched right-layer vs left-layer scatter (legacy nb 9
-    `layer_lr_comp` panel). Takes output of `get_cb_layer_lr_homologue`."""
+    """Cell-type-matched right-layer vs left-layer scatter (output
+    `layer_lr_comp`). Takes output of `get_cb_layer_lr_homologue`."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     fig = _plot_layer_lr_scatter(
         layer_lr_homologue, "cell_type", colored_region_df,
@@ -4584,8 +4729,8 @@ def plot_cb_layer_lr_comparison(
     dataset: str = DATASET, save_dir: Path | None = None,
     highlight: list[str] | None = None,
 ):
-    """Per-instance right-layer vs left-layer scatter (legacy nb 9
-    `layer_lr_idx_comp` panel)."""
+    """Per-instance right-layer vs left-layer scatter (output
+    `layer_lr_idx_comp`)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     fig = _plot_layer_lr_scatter(
         layer_lr, "instance", colored_region_df,
@@ -4603,8 +4748,8 @@ def plot_cb_vic_lr_homologue(
     vic_thre: float = 5e-4, dataset: str = DATASET,
     save_dir: Path | None = None,
 ):
-    """Per-cell-type right vs left CB VIC scatter + diff histogram
-    (legacy nb 9 cells 24-25). Region labels are based on summed VIC:
+    """Per-cell-type right vs left CB VIC scatter + diff histogram.
+    Region labels are based on summed VIC:
     `VIC_r+VIC_l < vic_thre` → VNC, `< 1e-2` → left OL, `>= 1e-2` → right OL.
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
@@ -4657,7 +4802,7 @@ def plot_cb_vic_binocularity(
 ):
     """Per-instance VIC_r vs VIC_l scatter, colored by binocularity region:
     'VNC' = both below `vic_thre`, 'right OL' = both above, 'left OL' = one
-    above one below. Matches legacy nb 9 `vic_lr_binoc` panel.
+    above one below. Output `vic_lr_binoc`.
     """
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_clustering"
     df = vic_lr_type.copy()
@@ -4715,7 +4860,7 @@ def plot_cb_rf_r2_summary(
     save_dir: Path | None = None,
 ):
     """r2 histogram (vertical), r2 cumulative, and r2-vs-hitting_time scatter
-    across regions — legacy nb 10 r2 panel."""
+    across regions."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     figs = []
     bins = np.linspace(-1.05, 1.05, 31)
@@ -4762,32 +4907,18 @@ def plot_cb_rf_size_summary(
     star_types: list[str] | None = None,
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
-    """Size histogram + size-vs-layer, VIC-vs-size and VIC-vs-amp scatters
-    (legacy nb 10 size panel). Only includes rows with `r2 > r2_thre`."""
+    """VIC-vs-size and VIC-vs-amp scatters. Only
+    includes rows with `r2 > r2_thre`.
+
+    NOTE: this function used to also emit `cb_size_hist` / `cb_layer_vs_size`,
+    but those are the 2D-Gaussian analogues of the SI 13a alpha-hull panels
+    produced by `plot_cb_ahull_size_summary` and shared the same output
+    filenames. They were dropped here to avoid clobbering the (manifest-owned)
+    alpha-hull SI 13a outputs — see the name-clash note in that function."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     stars = [s + "_R" for s in _RF_STAR_EXAMPLES] if star_types is None else list(star_types)
     figs = []
     sub = type_df[type_df["r2"] > r2_thre].copy()
-
-    bins = 2 ** np.linspace(np.log2(1.4), np.log2(350), 12)
-    fig = _hist_lines_v(sub, "size", "region", bins, colored_region_df,
-                        height=400, width=300)
-    fig.update_layout(
-        yaxis_title="ARF size", xaxis_title="frac. cell types",
-        xaxis_range=[-.01, 0.5], xaxis_title_standoff=0, yaxis_title_standoff=2,
-    )
-    fig.update_yaxes(type="log", tickformat="d",
-                     tickvals=[5, 10, 50, 100], range=[np.log10(1.45), np.log10(350)])
-    figs.append((fig, f"{dataset}_cb_size_hist.pdf"))
-
-    fig = _scatter(sub, "hitting_time", "size", "region", "instance",
-                   colored_region_df, stars, height=600, width=600)
-    fig.update_yaxes(type="log", tickformat="d",
-                     tickvals=[5, 10, 50, 100], range=[np.log10(1.45), np.log10(350)])
-    fig.update_xaxes(range=[0.8, 5.2])
-    fig.update_layout(xaxis_title="layer", yaxis_title="ARF size",
-                      xaxis_title_standoff=0, yaxis_title_standoff=2)
-    figs.append((fig, f"{dataset}_cb_layer_vs_size.pdf"))
 
     fig = _scatter(sub, "VIC", "size", "region", "instance",
                    colored_region_df, stars, height=600, width=600)
@@ -4863,8 +4994,12 @@ def plot_cb_ahull_size_summary(
                       xaxis_title_standoff=0, yaxis_title_standoff=2)
     figs.append((fig, f"{dataset}_cb_layer_vs_size.pdf"))
 
+    # This function OWNS the `cb_size_hist` / `cb_layer_vs_size` filenames for
+    # the (manifest) SI 13a panels; `plot_cb_rf_size_summary` no longer writes
+    # them (name clash removed). Only the layer-vs-size scatter (SI 13a_1) gets
+    # an interactive sidecar; the size histogram (SI 13a_2) stays PDF-only.
     for fig, name in figs:
-        _save(fig, save_dir, name, html=True)
+        _save(fig, save_dir, name, html=name.endswith("cb_layer_vs_size.pdf"))
     return figs
 
 
@@ -4876,7 +5011,7 @@ def plot_cb_vcbn_ahull_size_comparison(
     dataset: str = DATASET, save_dir: Path | None = None,
 ):
     """VCBN alpha-hull arbor size vs propagated RF size (SI Fig. 10a) — the
-    VCBN analogue of the OL `examples_ahull_reldiff_vs_size` panel.
+    VCBN analogue of the OL `plot_ol_ahull_size_comparison` panel (SI Fig. 7g).
 
     `cmp_df` is per-instance with `instance`, `region`, `size` (propagated RF
     size, col) and `ahull_size` (alpha-hull arbor size, col). Writes two
@@ -4919,6 +5054,39 @@ def plot_cb_vcbn_ahull_size_comparison(
 
 
 # %%
+def plot_ol_ahull_size_comparison(
+    cmp_df: pd.DataFrame, colored_main_groups_df: pd.DataFrame,
+    *, star_types: list[str] | None = None,
+    dataset: str = DATASET, save_dir: Path | None = None,
+):
+    """OL alpha-hull ARF size vs propagated RF size (SI Fig. 7g) — the OL
+    analogue of `plot_cb_vcbn_ahull_size_comparison`, computed over all
+    right-OL instances instead of VCBNs and coloured by `main_groups`
+    (VPN / VIN) rather than region.
+
+    `cmp_df` is per-instance with `instance`, `main_groups`, `size`
+    (propagated RF size, col) and `ahull_size` (alpha-hull ARF size, col).
+    Writes `{dataset}_examples_ahull_reldiff_vs_size.pdf` — the relative size
+    difference `(ahull - RF) / RF` vs RF size — into the exp_comparison topic
+    dir. `star_types` (default none) are highlighted with labels."""
+    save_dir = save_dir if save_dir is not None else FIG_DIR / "exp_comparison"
+    df = cmp_df.dropna(subset=["size", "ahull_size"]).copy()
+    stars = list(star_types) if star_types is not None else []
+
+    df["rel_diff"] = (df["ahull_size"] - df["size"]) / df["size"]
+    fig_rd = _scatter(df, "size", "rel_diff", "main_groups", "instance",
+                      colored_main_groups_df, stars, height=600, width=600)
+    fig_rd.update_layout(
+        xaxis_title="propagated RF size (col)",
+        yaxis_title="(ahull size - prop RF size) / prop RF size",
+    )
+    fig_rd.update_xaxes(type="log", tickformat="d", dtick=1)
+    _save(fig_rd, save_dir,
+          f"{dataset}_examples_ahull_reldiff_vs_size.pdf", html=True)
+    return fig_rd
+
+
+# %%
 def plot_rf_size_per_layer(
     type_df: pd.DataFrame,
     *, size_col: str = "ahull_size", color: str = "#333333",
@@ -4933,15 +5101,15 @@ def plot_rf_size_per_layer(
     (0, 0.5, ..., 6). Each x tick shows the layer and, on a second line in
     parentheses, the number of neurons (rows) in that bin. Pass a per-neuron df
     with `hitting_time` and `size_col` columns — e.g. `get_rf_ahull_neuron()`,
-    whose `ahull_size` is the per-neuron alpha-hull (OL intrinsic + VPN + VCBN
-    pooled). Legacy nb 10."""
+    whose `ahull_size` is the per-neuron alpha-hull (VIN + VPN + VCBN
+    pooled)."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     bins = np.arange(-0.25, 6 + 0.25 + 1e-9, 0.5)
     labels = (bins[1:] + bins[:-1]) / 2
     df = type_df.copy()
     # Fold the high tail into the last visible layer so nothing is dropped:
     # clip the hitting time to <= 5 before binning, so every neuron with
-    # layer > 4.75 (incl. the formerly-cropped layer > 5.25) goes into layer 5.
+    # layer > 4.75 (incl. layer > 5.25) goes into layer 5.
     ht = df["hitting_time"].clip(upper=5.0)
     df["bin"] = pd.cut(ht, bins=bins, labels=labels).astype(float)
     df = df.dropna(subset=["bin", size_col])
@@ -5104,8 +5272,7 @@ def plot_ol_to_cb_heatmap(
     ylabel: str = "VPN types (medium <---> small)",
     show_ticks: bool = False,
 ):
-    """Heatmap of normalised VPN → CB-type effective weights. Legacy
-    nb 10 cell 1d2d8ed4 / e14975dd / 722c0f59."""
+    """Heatmap of normalised VPN → CB-type effective weights."""
     save_dir = save_dir if save_dir is not None else FIG_DIR / "CB_rf_fits"
     fig = go.Figure(data=go.Heatmap(
         z=tb_clu_df.values,
@@ -5147,14 +5314,58 @@ def plot_ol_to_cb_heatmap(
 
 
 # %%
+def _draw_sector_polar(sec_vals, *, cov0_max: float = 0.4):
+    """Retinotopic-coverage "pokemon" pictogram.
+
+    Draw the five sector fractions (`sec_vals` = sec1..sec5 = A, D, P, V, C) as
+    a polar annulus of four 90-degree outer wedges (A/D/P/V) around a central
+    disk (C), coloured on ``RdBu_r`` scaled to ``cov0_max``. ``sec_vals`` is
+    renormalised to sum to 1 so the wedges show per-sector coverage fractions.
+    Returns a matplotlib ``Figure`` (save with ``fig.savefig``; this is a
+    matplotlib figure, not a plotly one, so it does not go through ``_save``).
+    """
+    import matplotlib.pyplot as plt
+
+    sec_vals = np.asarray(sec_vals, dtype=float)
+    total = np.nansum(sec_vals)
+    if total > 0:
+        sec_vals = sec_vals / total
+
+    fig, ax = plt.subplots(figsize=(4, 4), subplot_kw={"projection": "polar"})
+    ax.set_ylim(0, 1)
+    ax.set_theta_zero_location("SW")
+    ax.set_theta_direction(-1)
+    r0 = 1 / np.sqrt(5)  # inner radius: centre disk area == one outer wedge
+
+    for sector, wt in enumerate(sec_vals, start=1):
+        color = plt.cm.RdBu_r(wt / cov0_max)
+        if sector == 5:  # central disk (C)
+            theta = np.linspace(0, 2 * np.pi, 100)
+            ax.fill(theta, np.full_like(theta, r0), color=color,
+                    edgecolor="k", linewidth=0)
+        else:            # outer 90-degree wedges (A, D, P, V)
+            a0 = np.deg2rad((sector - 1) * 90)
+            a1 = np.deg2rad(sector * 90)
+            ax.bar(x=(a0 + a1) / 2, height=1 - r0, width=a1 - a0, bottom=r0,
+                   color=color, edgecolor="k", linewidth=0, align="center")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fig.tight_layout()
+    return fig
+
+
+# %%
 def plot_ol_roi_coverage_per_roi(
     coverage: dict, sectors: pd.DataFrame,
     *, dataset: str = DATASET, save_dir: Path | None = None, cov0_max: float = 0.4,
 ):
     """For each ROI in `coverage['per_roi']`, save three PDFs: full hex heatmap,
-    per-sector relative heatmap, and eye-symbol pictogram. Iterates ~78 ROIs.
-    `cov0_max`: upper bound for the relative-coverage colorscale (values above
-    are clipped to full colour)."""
+    per-sector relative heatmap, and a "pokemon" polar-annulus pictogram of the
+    5 sector fractions (`..._coverage_symbol.pdf`; replaces the former
+    eye-symbol). Iterates ~78 ROIs. `cov0_max`: upper bound for the
+    relative-coverage colorscale (values above are clipped to full colour)."""
+    import matplotlib.pyplot as plt
+
     from connectome_interpreter.external_map import hex_heatmap
     save_dir = save_dir if save_dir is not None else FIG_DIR / "coverage"
     summary = coverage["summary"].set_index("roi")
@@ -5187,13 +5398,17 @@ def plot_ol_roi_coverage_per_roi(
         )
         figs.append((fig, f"{dataset}_{roi}_coverage_relative.pdf"))
 
+        # "pokemon" pictogram: the 5 sector fractions as a polar annulus
+        # (replaces the former eye-symbol). This is a matplotlib figure, so it
+        # is saved directly rather than through the plotly-only `_save`.
         sec_vals = summary.loc[roi, ["sec1", "sec2", "sec3", "sec4", "sec5"]].values.astype(float)
-        colors = [
-            px.colors.sample_colorscale("RdBu_r", float(min(v, cov0_max)) / cov0_max)[0]
-            for v in sec_vals
-        ]
-        fig = _eyesymbol(colors)
-        figs.append((fig, f"{dataset}_{roi}_coverage_symbol.pdf"))
+        pfig = _draw_sector_polar(sec_vals, cov0_max=cov0_max)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        pfig.savefig(
+            save_dir / f"{dataset}_{roi}_coverage_symbol.pdf",
+            bbox_inches="tight", transparent=True,
+        )
+        plt.close(pfig)
 
     for fig, name in figs:
         _save(fig, save_dir, name)

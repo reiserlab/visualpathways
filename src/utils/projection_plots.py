@@ -289,6 +289,102 @@ def plot_extreme_projection_xy(
     return fig, ax, im
 
 
+# ── visual-input contribution panels ──────────────────────────────────────
+# Shared plotting window for every contribution / resolution panel.
+_CONTRIB_XRANGE = [20000, 80000]
+_CONTRIB_YRANGE = [0, 50000]
+_CONTRIB_XNBINS = 240
+_CONTRIB_YNBINS = 200
+
+# main_groups -> hitting-time layer edges (each consecutive pair is one panel).
+DEFAULT_CONTRIB_LAYERS = {"VPN": [1, 5], "nonOL": [2, 3.5, 4, 5]}
+
+
+def _resolve_vmax(vmax, gp, layer_i, vals):
+    """Per-panel colour ceiling. ``'p99'`` -> 99th percentile of this panel;
+    a ``{group: [per-layer, ...]}`` dict -> the per-group/per-layer entry;
+    a scalar -> the same value for every panel."""
+    if isinstance(vmax, str):
+        if vmax == "p99":
+            return float(np.nanpercentile(vals, 99))
+        raise ValueError(f"unknown vmax spec {vmax!r}")
+    if isinstance(vmax, dict):
+        return vmax[gp][layer_i]
+    return vmax
+
+
+def plot_contribution_layers(
+    syn, val_col, *, plot_dir, fname, outlines,
+    gp_layers=DEFAULT_CONTRIB_LAYERS, vmax="p99", vmin=0,
+    agg="largest", im_norm="linear", cmap_div=False, agg_frac=0.1,
+    top_n=6, show_ninst=False, annotate=True,
+):
+    """Extreme-value projection panels split by main-group and hitting-time layer.
+
+    For each ``main_groups`` in ``gp_layers`` and each consecutive ``ht``
+    interval, filter ``syn``, colour by ``val_col``, and render one
+    :func:`plot_extreme_projection_xy` heatmap saved to
+    ``plot_dir / fname(gp, lo, hi)``. Pass ``gp_layers=None`` to render a single
+    panel over the whole ``syn`` (``fname`` is then called as
+    ``fname(None, None, None)``).
+
+    ``vmax`` accepts ``'p99'`` (per-panel 99th percentile), a scalar (same
+    ceiling for every panel), or a ``{group: [per-layer, ...]}`` dict. Returns
+    ``(top_rois_ls, tbar_counts)``: per panel, the top-``top_n`` ROIs by synapse
+    count (a Series) and the panel's synapse count.
+    """
+    if gp_layers is None:
+        panels = [(None, 0, None, None)]
+    else:
+        panels = [
+            (gp, i, edges[i], edges[i + 1])
+            for gp, edges in gp_layers.items()
+            for i in range(len(edges) - 1)
+        ]
+
+    top_rois_ls, tbar_counts = [], []
+    for gp, layer_i, lo, hi in panels:
+        if gp is None:
+            df_plot = syn.copy()
+        else:
+            mask = (
+                (syn["main_groups"] == gp)
+                & (syn["ht"] > lo) & (syn["ht"] <= hi)
+            )
+            df_plot = syn[mask].copy()
+        if df_plot.empty:
+            continue
+        df_plot["val"] = df_plot[val_col]
+
+        top_rois_ls.append(
+            df_plot.groupby("roi").size().sort_values(ascending=False).iloc[:top_n]
+        )
+        tbar_counts.append(len(df_plot))
+
+        fig, ax, _ = plot_extreme_projection_xy(
+            df_plot, outlines,
+            xrange=_CONTRIB_XRANGE, yrange=_CONTRIB_YRANGE,
+            xnbins=_CONTRIB_XNBINS, ynbins=_CONTRIB_YNBINS,
+            agg=agg, im_norm=im_norm, cmap_div=cmap_div, agg_frac=agg_frac,
+            vmin=vmin, vmax=_resolve_vmax(vmax, gp, layer_i, df_plot["val"]),
+        )
+        if annotate:
+            parts = []
+            if show_ninst:
+                parts.append(f"n_inst={df_plot.instance.nunique()}")
+            parts += [f"n_n={df_plot.bodyId.nunique()}", f"n_syn={len(df_plot)}"]
+            if lo is not None:
+                parts.append(f"ht={lo}_{hi}")
+            ax.text(
+                0.5, 0.95, ", ".join(parts), fontsize=10, fontweight="bold",
+                ha="center", va="top", transform=ax.transAxes,
+            )
+        fig.savefig(plot_dir / fname(gp, lo, hi), bbox_inches="tight")
+        plt.close(fig)
+
+    return top_rois_ls, tbar_counts
+
+
 # todo, combine with above
 def plot_extreme_projection_xz(
     df: pd.DataFrame,

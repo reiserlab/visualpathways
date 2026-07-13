@@ -8,10 +8,8 @@ Hosts:
 - the `is_cb_neuron` CB-membership predicate
 - the private helpers other utils modules import: `_load_meta_groups`,
   `_ensure_ol_sidecars`, `_grouped_paths`, `_swap_lr_suffix`, `_SIDE_WORD`,
-  `_LAYER_EXAMPLE_TYPES`, `load_layer_example_types`.
-
-Moved out of `setup_data/_preprocessing.py` in Phase E of the legacy-API
-retirement (see `docs/repo_reorg_v2.md`).
+  `_LAYER_EXAMPLE_TYPES`, `load_layer_example_types`,
+  `_PARTICIPATION_EXAMPLE_TYPES`, `load_participation_example_types`.
 """
 import re
 
@@ -27,12 +25,11 @@ _SIDE_WORD = {"r": "right", "l": "left"}
 
 _LAYER_EXAMPLE_TYPES = ['Mi4', 'T4a']
 
+_PARTICIPATION_EXAMPLE_TYPES = ['T4a']
+
 
 def _load_meta_groups(dataset: str, data_dir) -> pd.DataFrame:
-    """Load meta CSV and annotate with main_groups / region.
-
-    Migrated from legacy `loading_functions.load_meta_groups`.
-    """
+    """Load meta CSV and annotate with main_groups / region."""
     meta = pd.read_csv(data_dir / f"{dataset}_meta.csv")
     meta["cell_type"] = meta["cell_type"].fillna("unknown")
     meta["instance"] = meta["instance"].fillna("unknown")
@@ -131,10 +128,7 @@ def get_flow(
     side_char: str = SIDE_CHAR, n_flow: int = N_FLOW, hit_thre: float = HIT_THRE,
     force: bool = False,
 ) -> pd.DataFrame:
-    """Per-neuron hitting times; adds per-instance `count`.
-
-    Migrated from legacy `loading_functions.load_flow_data`.
-    """
+    """Per-neuron hitting times; adds per-instance `count`."""
     def _compute():
         fp = data_dir / f"{dataset}_{side_char}_flow_{n_flow}step_{hit_thre}thre_hit.csv"
         flow = pd.read_csv(fp)
@@ -164,7 +158,7 @@ def _ensure_ol_sidecars(
 ):
     """Materialise `OL_{side_char}_*` sidecar files in `data/` if missing.
 
-    Builds from the full-brain files. Mirrors legacy `load_OL_data`: takes
+    Builds from the full-brain files: takes
     region == '{side} OL' & main_groups != 'other' & instance != 'R1-R6_R',
     reindexes to local 0..N-1 `idx`, keeps original full-brain idx as `idx_full`,
     and slices prop / lat_flow_0 / lat_flow_sum accordingly.
@@ -255,9 +249,15 @@ def get_ol_flow_type(
 
 
 def load_layer_example_types(side_char: str = SIDE_CHAR) -> list:
-    """Cell types used as "layer example" pathway subjects (legacy helper)."""
+    """Cell types used as "layer example" pathway subjects."""
     suffix = '_R' if side_char == 'r' else '_L'
     return [t + suffix for t in _LAYER_EXAMPLE_TYPES]
+
+
+def load_participation_example_types(side_char: str = SIDE_CHAR) -> list:
+    """Cell types used as participation-pathway example subjects (Main Fig. 3)."""
+    suffix = '_R' if side_char == 'r' else '_L'
+    return [t + suffix for t in _PARTICIPATION_EXAMPLE_TYPES]
 
 
 def _grouped_paths(stepsn, inidx, outidx, n_interm: int, idx_to_instance: dict,
@@ -280,6 +280,42 @@ def _grouped_paths(stepsn, inidx, outidx, n_interm: int, idx_to_instance: dict,
         )
         all_paths.append(paths)
     return all_paths
+
+
+def grouped_effweight(
+    stepsn, inidx, outidx, inidx_map, outidx_map,
+    combining_method: str = "median",
+) -> pd.DataFrame:
+    """Grouped effective weight from a lateral-flow-sum matrix.
+
+    Sums the effective weight over input neurons within each `inidx_map` group,
+    then combines (``"median"`` / ``"mean"`` / ``"sum"``) over output neurons
+    within each `outidx_map` group. Returns rows = output groups, cols = input
+    groups. Applies no thresholding, sorting, or printing.
+
+    Single primitive behind the visual-input effective-weight family
+    (clustering feature vectors, per-body VIC): with
+    ``combining_method="median"`` and instance→instance maps it reproduces the
+    clustering feature vectors exactly; it is otherwise equivalent to
+    `connectome_interpreter.result_summary` (whose default combine is
+    ``"mean"``) without that function's display / sort / threshold side effects.
+    Note ``"mean"`` vs ``"median"`` only differs when an output group has more
+    than one neuron (i.e. output grouped by type, not bodyId).
+    """
+    if combining_method not in ("median", "mean", "sum"):
+        raise ValueError(
+            "combining_method must be 'median', 'mean', or 'sum'; "
+            f"got {combining_method!r}"
+        )
+    in_out_df = pd.DataFrame(
+        data=stepsn[:, outidx][inidx, :].toarray(),
+        index=[str(inidx_map[k]) for k in inidx],
+        columns=outidx,
+    )
+    in_out_df = in_out_df.groupby(in_out_df.index).sum()
+    in_out_df.columns = [str(outidx_map[k]) for k in in_out_df.columns]
+    grouped = in_out_df.T.groupby(level=0)
+    return getattr(grouped, combining_method)()
 
 
 def get_full_prop(*, dataset: str = DATASET, data_dir=DATA_DIR):
