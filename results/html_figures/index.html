@@ -221,7 +221,7 @@
   <main>
     <header>
       <h1>Interactive HTML Figures</h1>
-      <div class="count" id="panel-count">20 panels</div>
+      <div class="count" id="panel-count"></div>
     </header>
 
     <div class="layout">
@@ -240,51 +240,70 @@
 
   <script>
     const figures = [
-      "main_1_f_2.html",
-      "main_1_k_2.html",
-      "main_2_b_1.html",
-      "main_2_b_2.html",
-      "main_2_d_1.html",
-      "main_2_d_2.html",
-      "main_2_f.html",
-      "main_2_h_1.html",
-      "main_2_h_2.html",
+      "main_2_f_2.html",
+      "main_3_b.html",
       "main_3_d_1.html",
       "main_3_d_2.html",
       "main_3_e.html",
-      "main_3_f_1.html",
-      "main_3_f_3.html",
-      "main_3_g_1.html",
-      "main_3_g_2.html",
-      "main_3_g_3.html",
-      "main_3_g_4.html",
-      "main_3_i_1.html",
-      "main_3_i_2.html",
-      "main_4_a_1.html",
-      "main_4_d.html",
+      "main_4_d_1.html",
+      "main_4_d_2.html",
       "main_4_e.html",
-      "main_4_e_2.html",
-      "main_4_f.html",
-      "main_6_b.html",
+      "main_4_f_1.html",
+      "main_4_f_3.html",
+      "main_4_g_1.html",
+      "main_4_g_2.html",
+      "main_4_g_3.html",
+      "main_4_g_4.html",
+      "main_4_i_1.html",
+      "main_5_a_1.html",
+      "main_5_c.html",
+      "main_5_d_1.html",
+      "main_5_d_2.html",
+      "main_5_e.html",
+      "main_5_f_top.html",
+      "main_7_b.html",
       "si_1_e.html",
-      "si_4_a.html",
-      "si_4_b_1.html",
-      "si_4_b_2.html",
-      "si_4_c.html",
-      "si_5_b_1.html",
-      "si_5_l_1.html",
+      "si_3_b_1.html",
+      "si_3_b_2.html",
+      "si_3_b_3.html",
+      "si_4_e.html",
+      "si_4_h.html",
+      "si_4_i.html",
+      "si_4_k.html",
+      "si_5_b.html",
+      "si_6_a_1.html",
+      "si_6_a_2.html",
+      "si_6_a_3.html",
+      "si_6_a_4.html",
+      "si_7_a.html",
       "si_7_b_1.html",
       "si_7_b_2.html",
+      "si_7_c.html",
       "si_7_d.html",
+      "si_7_e.html",
+      "si_7_f.html",
+      "si_7_g.html",
+      "si_8_a_1.html",
+      "si_8_b_1.html",
+      "si_8_g.html",
+      "si_8_h_top.html",
       "si_10_a_1.html",
       "si_10_a_2.html",
-      "si_10_b_1.html",
-      "si_10_b_2.html",
-      "si_10_c.html"
-    ];
+      "si_10_d_1.html",
+      "si_10_e.html",
+      "si_13_a_1.html",
+      "si_13_b.html",
+      "si_13_c.html",
+      "si_14_a_1.html",
+      "si_14_a_2.html",
+      "si_14_a_3.html",
+      "si_14_a_4.html",
+      "si_14_b_1.html",
+      "si_14_b_2.html"
+];
 
     const groups = figures.reduce((acc, file) => {
-      const group = file.match(/^(main|si)_\d+/)?.[0] || "other";
+      const group = file.match(/^(?:main|si)_\d+/)?.[0] || "other";
       (acc[group] ||= []).push(file);
       return acc;
     }, {});
