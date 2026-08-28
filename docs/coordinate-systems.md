@@ -20,6 +20,5 @@ system. We define the hex1 hex2 coordintes [18 19] as our origin for P Q.
 The H and V-axis use the same origin with V representing the virtual hex3. The H axis is somewhat parallel to the
 perceived horizon.
 
-![Coordinate system](assets/column_coord.png)
-
-A pdf (with vector graphics) [is available here](assets/column_coord.pdf).
+A reference figure of the coordinate systems (vector graphics)
+[is available here](column_coord.pdf).

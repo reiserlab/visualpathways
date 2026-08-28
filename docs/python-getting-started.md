@@ -2,7 +2,7 @@
 
 > The White Rabbit put on his spectacles. 'Where shall I begin, please your Majesty?' he asked. 'Begin at the beginning,' the King said gravely, 'and go on till you come to the end: then stop.' (Lewis Carroll)
 
-In this post I will follow the White Rabbit and attempt to describe how to go from a computer with no special software installed to executing a first data analysis on the Connectome data in Python. This means, you will have a working Python-3 and a virtual environment with all the dependencies from [`requirements.txt`](../requirements.txt) installed and the neuPrint authentication configure which allows you to run the `src/completeness/connection-completeness_named.py` script. If you don't know what this means or want to confirm that everyone is on the same page then the rest of the document is intended to help you set everything up. Otherwise and if you already have a working setup a feel free to skip the rest of the document, but you might want to have a brief look at the [guide about editing Python files](python-editors-getting-started.md).
+In this post I will follow the White Rabbit and attempt to describe how to go from a computer with no special software installed to a first successful connection to the Connectome data in Python. This means, you will have a working Python-3 and a virtual environment with the project's dependencies (defined in [`pyproject.toml`](../pyproject.toml)) installed, and the neuPrint authentication configured — verified by a short connection test at the end of this document. If you don't know what this means or want to confirm that everyone is on the same page then the rest of the document is intended to help you set everything up. Otherwise, if you already have a working setup, feel free to skip the rest of the document and continue with [`run_order.md`](run_order.md), which describes the data pipeline and figure notebooks.
 
 ## What version of Python?
 
@@ -36,7 +36,7 @@ Once installed, you can create an environment with `mkvirtualenv <NAME>`. Change
 
 ### Install Python 3 on MacOS
 
-The Python version that comes with MacOS is too old and would not work with the connectomics data. Instead of updating the system Python (not suggested, but explained in the [background document](random-background-info.md#macos-and-pyenv)), I recommend installing Miniconda, a version of Anaconda:
+The Python version that comes with MacOS is too old and would not work with the connectomics data. Instead of updating the system Python, I recommend installing Miniconda, a version of Anaconda:
 
 1. Download the miniconda `*.pkg` file from the [website](https://docs.conda.io/en/latest/miniconda.html). Choose either the Intel x86 or the Apple M1 package, depending on your processor. 
 2. Click on the downloaded `*.pkg` file to start the installer and confirm the licenses and directories.
@@ -70,7 +70,7 @@ The article [The right and wrong way to set Python 3 as default on a Mac](https
 8. Update your zsh environment: `echo -e 'eval "$(pyenv init -)"' >> ~/.zshrc`.
 9. Update your bash environment: `echo -e 'eval "$(pyenv init -)"' >> ~/.bash_profile`.
 10. Close your terminal.
-11. Open a new terminal window (Finder → Applications → Utilities → Terminal) and [verify your Python version](#download-and-install-python).
+11. Open a new terminal window (Finder → Applications → Utilities → Terminal) and verify your Python version with `python --version`.
 
 #### Set up the environment
 
@@ -81,23 +81,11 @@ The article [The right and wrong way to set Python 3 as default on a Mac](https
 3) Navigate to your optic lobe connectome directory (via `cd 'your directory')
 4) Create a new environment via `python -m venv .venv`. This creates a virtual environment in the directory `.venv` in the current location.
 5) Activate the environment by using the activation script inside the new environment: `source .venv/bin/activate`. Repeat this step whenever you need to re-enter the environment.
-6) Install dependencies with `pip install -r requirements.txt'
+6) Install dependencies with `pip install -e .`
 
 #### Updating the dependencies
 
-To update dependencies, 1) activate your environment with `source .venv/bin/activate` and 2) run `pip install -r requirements.txt`. If this fails, delete the `.venv` environment from your directory and repeat steps 3-6 from 'Set up the Environment'.
-
-
-
-#### Check the installed dependencies
-
-To validate the successful installation or update of dependencies, you can follow this simple method using git (more detail on what git is, see <git-getting-started.md>). Follow these steps for verification:
-
-1. __Check Current Dependency Versions__: Open the GitHub Desktop application and inspect the file `requirements.txt`` for any changes. Alternatively, you can use the command `git diff requirements.txt` to review potential alterations. At this initial stage, there should be no modifications.
-2. __Export Currently Used Packages with PIP__: Execute the command `pip freeze > requirements.txt`. This command exports the packages currently utilized in your virtual environment to the `requirements.txt` file. Notably, this is the same process that was employed for the initial creation of the file.
-3. __Check for Changes in `requirements.txt`__: Revisit the `requirements.txt`` file either through GitHub Desktop or by using `git diff` (as mentioned earlier). If the installation or update was successful, there should still be no significant changes in this file. Conversely, a substantial number of alterations in the file would indicate that the installation or update did not work as intended.
-
-By following these steps, you can effectively verify the integrity of your dependency installation or update process.
+To update dependencies, 1) activate your environment with `source .venv/bin/activate` and 2) run `pip install -e .` again. If this fails, delete the `.venv` environment from your directory and repeat steps 3-6 from 'Set up the Environment'.
 
 ### Install _vanilla_ Python 3 on Windows
 
@@ -123,9 +111,9 @@ If you prefer to use the Anaconda version, download the latest Miniconda from th
 
 The procedure to enable virtual environments inside the _*conda_ environments under Windows is exactly the same as under MacOS. Please follow the instructions there on how to do it.
 
-## Create the _ol-connectome_ environment
+## Create the environment
 
-With the virtualenvwrapper or conda installed, creating a new virtual environment is as easy as running the command `mkvirtualenv ol-connectome` (or `conda create --name ol-connectome`) in your terminal. This will create the environment with the name `ol-connectome` and automatically activate it. To end using a virtual environment, type the command `deactivate`. To start working within an existing environment, run the command `workon ol-connectome` to enable the ol-connectome again.
+With the virtualenvwrapper or conda installed, creating a new virtual environment is as easy as running the command `mkvirtualenv <NAME>` (or `conda create --name <NAME>`) in your terminal, where `<NAME>` is any name you choose. This will create the environment and automatically activate it. To end using a virtual environment, type the command `deactivate`. To start working within an existing environment, run the command `workon <NAME>` to enable it again.
 
 ## Extra step for Windows
 
@@ -135,19 +123,19 @@ One of our libraries requries a C++ compiler. While MacOS and Linux have these p
 
 ## Dependency management
 
-From this step forward you will need to have the code from the [optic-lobe-connectome](https://github.com/reiserlab/optic-lobe-connectome) github project. So please download the code to a directory, which I will call _project root_ (or `$PROJECT_ROOT`) from now on. If you need help with git and github, read the [getting started guide for git](git-getting-started.md) on how to use git and github for this project.
+From this step forward you will need to have the code from the [ol-connectome-analysis](https://github.com/reiserlab/ol-connectome-analysis) github project. So please download the code to a directory, which I will call _project root_ (or `$PROJECT_ROOT`) from now on.
 
-Open a terminal and go to the _project root_. If you look at the files, there should be a `requirements.txt` file. This file contains all the libraries necessary to run the analysis. To install everything, first make sure that you have the virtual environment activated, for example by executing `workon ol-connectome`. If you are not sure, it doesn't hurt to run the command again.
+Open a terminal and go to the _project root_. The project's dependencies are defined in `pyproject.toml`. To install everything, first make sure that you have the virtual environment activated, for example by executing `workon <NAME>` (or `conda activate <NAME>`). If you are not sure, it doesn't hurt to run the command again.
 
-Now you can install all packages via the command `pip install -r requirements.txt`. Make sure, that you did the [extra step in Windows](#extra-step-for-windows). If you run this the first time, it might take a few minutes to download all required libraries. This will include some basic tools, but also the [neuprint-python](https://github.com/connectome-neuprint/neuprint-python) library that is required to access the connectome data.
+Now you can install all packages via the command `pip install -e .`. Make sure that you did the [extra step in Windows](#extra-step-for-windows). If you run this the first time, it might take a few minutes to download all required libraries. This will include some basic tools, but also the [neuprint-python](https://github.com/connectome-neuprint/neuprint-python) library that is required to access the connectome data. (For an exactly-reproducible environment with pinned versions, use `pip install -r requirements-lock.txt` instead.)
 
-To enable the _ol-connectome_ kernel in your Jupyter notebooks run the command `ipython kernel install --name "ol-c-kernel" --user` in a terminal that still has the _ol-connectome_ virtual environment enabled. Read more about the use of Jupyter at the [editor guide](python-editors-getting-started.md#getting-started-with-jupyter).
+To use the environment in Jupyter notebooks, register it as a kernel by running `python -m ipykernel install --user --name <a-name-of-your-choice>` in a terminal that still has the virtual environment enabled, then select that kernel when opening a notebook. The kernel name is entirely up to you — the kernel names stored in the notebooks' metadata are just whatever the last editor happened to use, and nothing in this project depends on them.
 
-To update the packages in the `ol-connectome` environment based on the most up-to-date dependencies in `requirements.txt` you can either do it through the terminal (see the `update dependencies` section in the [Makefile](https://github.com/reiserlab/optic-lobe-connectome/blob/main/Makefile) page), or do it using the Anaconda Navigator (Instructions can be found [here](anaconda-navigator-getting-started.md)). 
+To update the packages in the environment, activate it and run `pip install -e .` again. 
 
 ## Project configuration
 
-Access to the connectome data via neuprint requires authentication. To get the example script to work, create a copy of the `.env-sample` file with the name `.env` inside your _project root_. To add your own credentials, you will need to go to the account page at [neuPrint](https://neuprint-cns.janelia.org/account) and copy the (very long) AuthToken to the line starting with `NEUPRINT_APPLICATION_CREDENTIALS=`. Double check that the other two variables are set correctly.
+Access to the connectome data via neuprint requires authentication. Create a copy of the `.env_sample` file with the name `.env` inside your _project root_. To add your own credentials, you will need to go to the account page at [neuPrint](https://neuprint-cns.janelia.org/account) and copy the (very long) AuthToken to the line starting with `NEUPRINT_APPLICATION_CREDENTIALS=`. The other variables (server URL, dataset name, mesh/ROI sources) are pre-filled with the correct values — double check that `NEUPRINT_DATASET_NAME=male-cns:v1.0` is set.
 
 Setting the plotting backend for navis via the environment is convenient as well. For example, to use the plotly library, add this:
 
@@ -156,31 +144,37 @@ Setting the plotting backend for navis via the environment is convenient as well
 NAVIS_JUPYTER_PLOT3D_BACKEND=plotly
 ```
 
-## Run the analysis
+## Verify the connection
 
-Now you should be able to run the first analysis by executing `python src/completeness/connection-completeness_named.py`. Fairly quickly you should see some output of your configuration. The analysis takes some time, but after a few minutes the whole output might look like this:
+Now you should be able to verify your setup with a short connection test. From the _project root_, run:
 
 ```shell
-$ python src/completeness/connection-completeness_named.py
-
-Project root directory: $HOME/Projects/optic-lobe-connectome
-Connected to https://neuprint-cns.janelia.org[cns].
-Client: neuprint-python v0.1.0
-User: loeschef@janelia.hhmi.org [readwrite]
-
-identified 162 named neuron types
-Pulled data from 37941 neurons
-successfully exported results/completeness/2022-02-04T22:13:07_output-connection-completeness_named.xlsx
+python -c "
+from pathlib import Path
+import sys
+from dotenv import find_dotenv
+sys.path.append(str(Path(find_dotenv()).parent / 'src'))
+from utils import olc_client
+olc_client.connect(verbose=True)
+"
 ```
 
-You should also see a new Excel spreadsheet in the folder `results/completeness/` inside your _project root_.
+Within a few seconds you should see a confirmation that lists the server, the dataset, and the account associated with your token — something like:
+
+```shell
+Connected to https://neuprint-cns.janelia.org[male-cns:v1.0].
+Client: neuprint-python v1.7.3
+User: <your-email>@janelia.hhmi.org [readwrite]
+```
+
+If this works, your environment and credentials are complete. What to run next — the `setup_data` cache-building stages and the figure notebooks — is described in [`run_order.md`](run_order.md). Note that the figure notebooks read from a local cache that has to be built first; the cache build hits the neuPrint server and some stages are slow.
 
 ## File structure
 
-You might have noticed that the folder `$PROJECT_ROOT/src/completeness` contains two files starting with `connection-completeness_named`: one python file with the extension `.py` and one Jupyter notebook file with the extension `.ipynb`. These two files are connected: if the Python file is edited, this change will automatically be pulled into the notebook the next time it is opened. Also, if edits are done inside the notebook file, the changes will be saved to the Python file.
+You might have noticed that the folder `$PROJECT_ROOT/src/setup_data` contains two files starting with `s1_malecns_data`: one python file with the extension `.py` and one Jupyter notebook file with the extension `.ipynb` (the same is true for the other numbered stages there and the notebooks in `src/make_figures`). These two files are connected: if the Python file is edited, this change will automatically be pulled into the notebook the next time it is opened. Also, if edits are done inside the notebook file, the changes will be saved to the Python file.
 
-The connections is done through the [JupyText](https://jupytext.readthedocs.io) software which combines the best of at least three worlds: 1) easy tracking of changes in text files, 2) saving input and output in the notebook format, 3) execution of whole scripts without complicated environments. I will get into more details about this in the guide about [Python editors](python-editors-getting-started.md), but here I just wanted to explain why there are two files with the same name and similar extensions in the example folder.
+The connection is done through the [JupyText](https://jupytext.readthedocs.io) software which combines the best of at least three worlds: 1) easy tracking of changes in text files, 2) saving input and output in the notebook format, 3) execution of whole scripts without complicated environments. Here I just wanted to explain why there are two files with the same name and similar extensions in these folders.
 
 ## Final words
 
-If any of the above failed and you can't fix it, then please [get in contact](mailto:loeschef@janelia.hhmi.org).
+If any of the above failed and you can't fix it, then please open an issue on the [project's GitHub page](https://github.com/reiserlab/ol-connectome-analysis/issues) or get in contact with the Reiser Lab.

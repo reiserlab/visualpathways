@@ -47,11 +47,11 @@ def load_roi_colors():
         'PB':   '#fbab3d',
         'BU':   '#f49cc3',
         'LAL':  '#c6197e',
-        'LAL(L)': "#e86db3", # added by AZ
-        'AVLP': "#33cc64", # added by AZ
-        'AVLP(L)': "#5eed8b", # added by AZ
+        'LAL(L)': "#e86db3", # added by Arthur Zhao
+        'AVLP': "#33cc64", # added by Arthur Zhao
+        'AVLP(L)': "#5eed8b", # added by Arthur Zhao
         'PVLP': '#1cb24b',
-        'PVLP(L)': "#19dc5d", # added by AZ
+        'PVLP(L)': "#19dc5d", # added by Arthur Zhao
         'WED':  '#079647',
         'PLP':  '#0d783d',
         'AOTU': '#1c401d',

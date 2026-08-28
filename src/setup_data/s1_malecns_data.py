@@ -2,21 +2,18 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.16.0
-#   kernelspec:
-#     display_name: ol-connectome
-#     language: python
-#     name: python3
 # ---
 
 # %% [markdown]
 # # Setup malecns meta + sparse matrices
 #
-# Downloads adjacencies and neuron metadata from neuprint, merges the R7/R8 fill-in edge lists under `params/`, assembles hex coordinates, and writes `malecns_{tag}_meta.csv`, `prop.npz`, `inprop.npz` into `cache/data/`. Dataset tag is parsed from `NEUPRINT_DATASET_NAME` in `.env`.
+# Downloads adjacencies and neuron metadata from neuprint, merges the R7/R8 fill-in edge lists under `params/`, assembles hex coordinates, and writes `malecns_{tag}_meta.csv`, `prop.npz`, `inprop.npz` into `cache/data/`. Dataset tag is derived from `config.DATASET` (e.g. `malecns_v1.0` → `v1.0`).
 #
 # Uses tot_weight normalization and instance override from `cell_type` + side.
 
@@ -27,7 +24,7 @@ from dotenv import load_dotenv, find_dotenv
 
 PROJECT_ROOT = Path(find_dotenv()).parent
 sys.path.append(str(PROJECT_ROOT / 'src'))
-sys.path.append(str(PROJECT_ROOT / 'src' / 'setup_data' / 'lib'))
+sys.path.append(str(PROJECT_ROOT / 'src' / 'setup_data'))
 
 from utils import olc_client
 from utils.config import DATA_DIR, DATASET, SIDE_CHAR

@@ -1,17 +1,6 @@
-
-"""
-This cell does the initial project setup.
-If you start a new script or notebook, make sure to copy & paste this part.
-
-A script with this code uses the location of the `.env` file as the anchor for
-the whole project (= PROJECT_ROOT). Afterwards, code inside the `src` directory
-are available for import.
-"""
-from pathlib import Path
-import sys
-from dotenv import find_dotenv
-PROJECT_ROOT = Path(find_dotenv()).parent
-sys.path.append(str(PROJECT_ROOT.joinpath('src')))
+"""Primary-ROI lookup helper (`get_primary_rois`). Imported as a `utils`
+submodule — expects `src` on `sys.path` (handled by the entry-point
+scripts/notebooks)."""
 
 import pandas as pd
 import neuprint

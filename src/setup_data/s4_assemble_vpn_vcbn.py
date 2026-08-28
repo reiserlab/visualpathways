@@ -3,6 +3,7 @@
 #   jupytext:
 #     cell_metadata_filter: -all
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
@@ -11,8 +12,8 @@
 # ---
 
 # %%
-# run in this order: this (assemble vp_cb + effweight + RF caches) -> s4_tbar
-# -> paper_figures AZ panels + galleries. The former standalone rf_size step is
+# run in this order: this (assemble vp_cb + effweight + RF caches) -> s5_tbar
+# -> paper_figures VIC panels + galleries. The former standalone rf_size step is
 # incorporated as the last section of this notebook.
 
 # combine meta with vic and ht
@@ -26,7 +27,6 @@ A script with this code uses the location of the `.env` file as the anchor for
 the whole project (= PROJECT_ROOT). Afterwards, code inside the `src` directory
 are available for import.
 """
-import torch
 from pathlib import Path
 import sys
 from dotenv import load_dotenv, find_dotenv
@@ -43,6 +43,7 @@ import pandas as pd
 
 from utils.config import DATA_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+print(DATA_DIR)
 
 # %% [markdown]
 # # Some setups
@@ -162,16 +163,21 @@ from utils import ol_rf
 
 # %% [markdown]
 # ## OL non-visual-input: VIN + VPN + VCN (ellipse + alpha hull), OL-subset lat_flow_sum
+#
+# Right side only. `side_char='r'` is passed explicitly (rather than relying
+# on the `side_char=SIDE_CHAR` default) because that default is bound once,
+# at `ol_rf` import time, to whatever `config.SIDE_CHAR` happens to be in this
+# process — passing it explicitly avoids depending on that process-wide state.
 
 # %%
-rf_ol = ol_rf.get_rf_raw_ol(force=True)
+rf_ol = ol_rf.get_rf_raw_ol(side_char='r', force=True)
 print('rf_raw_ol:', rf_ol.shape, '| hull-valid:', int(rf_ol['ahull_size'].notna().sum()))
 
 # %% [markdown]
 # ## VCBN (ellipse + alpha hull), full lat_flow_sum  (~1-2 h)
 
 # %%
-rf_cb = ol_rf.get_rf_raw_cb(force=True)
+rf_cb = ol_rf.get_rf_raw_cb(side_char='r', force=True)
 print('rf_raw_cb:', rf_cb.shape, '| hull-valid:', int(rf_cb['ahull_size'].notna().sum()))
 
 # %% [markdown]

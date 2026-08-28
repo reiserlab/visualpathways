@@ -307,8 +307,10 @@ def grouped_effweight(
             "combining_method must be 'median', 'mean', or 'sum'; "
             f"got {combining_method!r}"
         )
+    # slice rows first: cheap for CSR and shrinks the matrix before the
+    # expensive column indexing (columns-first scans all nonzeros)
     in_out_df = pd.DataFrame(
-        data=stepsn[:, outidx][inidx, :].toarray(),
+        data=stepsn[inidx, :][:, outidx].toarray(),
         index=[str(inidx_map[k]) for k in inidx],
         columns=outidx,
     )

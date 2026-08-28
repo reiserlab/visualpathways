@@ -1,8 +1,9 @@
 """Dataset-agnostic lateral-flow matrix builders.
 
 Split out of the former `setup_data.py` (its §9-10). Consumed by
-`setup_data/base_cache/s3_effconn.py`; works for any dataset (malecns or flywire).
-The malecns meta/matrix assembly (§1-8) now lives in `malecns.py` (same `lib/` dir).
+`setup_data/s3_effconn.py` (and `s2_layers.py`); works for any dataset (malecns
+or flywire). The malecns meta/matrix assembly (§1-8) now lives in `malecns.py`
+(same `setup_data/` dir).
 """
 from pathlib import Path
 

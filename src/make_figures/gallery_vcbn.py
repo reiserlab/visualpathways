@@ -2,23 +2,22 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.16.0
-#   kernelspec:
-#     display_name: ol-analysis
-#     language: python
-#     name: python3
 # ---
+
+# %% [markdown]
+# ### make gallery for VCBNs, Document S3
+#
+# This takes time!
 
 # %%
 # %load_ext autoreload
 # %autoreload 2
-
-# %% [markdown]
-# ### make gallery for VCBNs, Document S3
 
 # %%
 """
@@ -29,7 +28,6 @@ A script with this code uses the location of the `.env` file as the anchor for
 the whole project (= PROJECT_ROOT). Afterwards, code inside the `src` directory
 are available for import.
 """
-import torch
 from pathlib import Path
 import sys
 from dotenv import load_dotenv, find_dotenv
@@ -54,8 +52,8 @@ import matplotlib.pyplot as plt
 import connectome_interpreter as ci
 
 from utils.ol_rf import count_col_ahull
-from utils import ol_rf, vic
-from utils.plotting_functions import plot_gaussian_params
+from utils import core_data, ol_rf, vic
+from utils.figure_helpers import plot_gaussian_params
 from utils.plotter import plot_cns, save_figure_anterior
 from utils.pdf_report import (
     natural_sort_key, safe_name, _fmt, split_rect_lr, insert_title_italic_f,
@@ -67,7 +65,7 @@ from utils.gallery_common import make_bar_fig
 from utils.config import (CACHE_DIR, CACHE_PROC_DIR, DATA_DIR, DATASET, PARAMS_DIR)
 
 # %%
-result_dir = Path(PROJECT_ROOT, 'results', 'quan_propagation')
+result_dir = Path(PROJECT_ROOT, 'results')
 result_dir.mkdir(parents=True, exist_ok=True)
 
 cache_dir = DATA_DIR
@@ -78,7 +76,7 @@ gallery_dir.mkdir(parents=True, exist_ok=True)
 
 
 # %% [markdown]
-# # load data
+# # Load data
 
 # %% [markdown]
 # ## brain outline 
@@ -89,12 +87,6 @@ outline_1 = pd.read_csv(Path(PARAMS_DIR, 'outline_cb_1.csv'), index_col=False)
 outline_2 = pd.read_csv(Path(PARAMS_DIR, 'outline_cb_2.csv'), index_col=False)
 
 outlines_bkgd = [outline_1,  outline_2]
-
-# %% [markdown]
-# ## syn
-
-# %%
-syn0 = pd.read_pickle(Path(cache_dir, 'tbar_vp_cb.pkl'))
 
 # %% [markdown]
 # ## ht, vic, size
@@ -109,13 +101,10 @@ rf_fit = pd.concat([
 
 
 # %%
-# meta_VP_CB_ahull replacement: per-neuron alpha hull (VPN + VCBN) from the
-# combined RF parquet, joined with VIC / hitting_time from the assembled VP+CB table.
-_ah = pd.concat([
-    ol_rf.get_rf_raw_ol().query("main_groups == 'VPN'"),
-    ol_rf.get_rf_raw_cb(),
-], ignore_index=True)[['bodyId', 'instance', 'cell_type',
-                       'ahull_size', 'ahull_kept_points', 'ahull_rmfrac']]
+# meta_VP_CB_ahull replacement: per-neuron alpha hull (VPN + VCBN) reusing the
+# rf_fit frame above, joined with VIC / hitting_time from the assembled VP+CB table.
+_ah = rf_fit[['bodyId', 'instance', 'cell_type',
+              'ahull_size', 'ahull_kept_points', 'ahull_rmfrac']]
 _vp = vic.load_vp_cb('r').rename(columns={'vision': 'VIC', 'ht': 'hitting_time'})
 meta_ahull = _ah.merge(_vp[['bodyId', 'VIC', 'hitting_time', 'main_groups']],
                        on='bodyId', how='inner')
@@ -133,23 +122,30 @@ print(meta_cb_vpn.shape, meta_cb_vpn.instance.nunique())
 
 # %%
 # median values
+# The rmfrac-filtered frame only picks the representative bodyId (3D/ARF
+# panels) and the size-to-count ratio; the printed stats (cell count, median
+# layer/VIC, median alpha-hull size) are merged from the same sources TableS3
+# uses, so gallery pages and results/tables/TableS3_VCBN_in_out_summary.csv
+# always agree.
 inst_median = meta_cb_vpn.groupby(['instance', 'cell_type', 'main_groups']).agg(
-    ahull_size=('ahull_size', 'median'),
     area_to_count=('area_to_count', 'median'),
-    VIC=('VIC', 'median'),
-    ht=('ht', 'median'),
     bodyId=('bodyId', 'first'),
-    bodyId_count=('bodyId', 'count'),
 ).reset_index()
+_flow_all = core_data.get_flow()
+inst_stats = (
+    _flow_all[['instance', 'count']].drop_duplicates('instance')
+    .merge(_flow_all.groupby('instance')['hitting_time'].median()
+           .rename('ht').reset_index(), on='instance', how='left')
+    .merge(vic.get_ol_cb_vic_type().query("region == 'CB'")[['instance', 'VIC']],
+           on='instance', how='left')
+    .merge(ol_rf.get_rf_ahull_neuron().groupby('instance')['ahull_size'].median()
+           .reset_index(), on='instance', how='left')
+)
+inst_median = inst_median.merge(inst_stats, on='instance', how='left')
 inst_median.shape
 
 # %% [markdown]
-# ## load effwt
-
-# %%
-
-# %% [markdown]
-# ## get meta
+# ## Get meta
 
 # %%
 # LOAD meta, this has AN's R7/8, 
@@ -165,10 +161,6 @@ bodyId_to_idx = dict(zip(meta.bodyId, meta.idx))
 
 # %% [markdown]
 # ## vcbn types
-
-# %%
-# sort — natural_sort_key is imported from utils.pdf_report
-
 
 # %%
 from utils.vic import get_vcbn_types
@@ -235,6 +227,10 @@ inidx_rf = meta.idx[meta.instance.isin(['L1_R', 'L2_R', 'L3_R', 'R7_R', 'R8_R', 
 outidx_rf = meta.idx[meta.bodyId.isin(inst_cb['bodyId'])]
 effwt_visr_7 = grouped_effweight(stepsn, inidx_rf, outidx_rf, idx_to_coords, idx_to_bodyId, combining_method="mean").T
 
+# stepsn (~10 GB in RAM) is only needed for the two grouped_effweight calls above —
+# free it before the render loop. Re-run the load cell above if this cell is re-run.
+del stepsn
+
 # normalize the feature vectors by row sum
 row_sum = feat.sum(axis=1)
 feat_norm = feat.div(row_sum.where(row_sum > 0, 1), axis=0)
@@ -259,11 +255,13 @@ cmap = {k.replace('HBeyelet', 'H-B'): v for k, v in cmap.items()}
 # VCBN cluster
 from utils import cb_data
 FRAC_CB = 0.17
-cl_r = cb_data.get_cb_clusters(side_char='r', frac_thre=FRAC_CB, force=True)
+# NB: force=True would recompute get_cb_features, which loads its own 10 GB copy
+# of lat_flow_sum — rely on the disk cache (keyed by frac/vic) unless inputs changed.
+cl_r = cb_data.get_cb_clusters(side_char='r', frac_thre=FRAC_CB)
 cl_r.shape
 
 # %% [markdown]
-# # main loop
+# # Rendering
 
 # %%
 import io
@@ -271,6 +269,30 @@ from PIL import Image
 import fitz  # PyMuPDF
 from utils.plotting import _stacked_bars
 
+# --- A. FILE SIZE  (size <-> quality trade-offs) -----------------------
+# Palette size for the colour-indexing in the size-shrink cell (after the build).
+# 256 = full colormap fidelity; 128 ~= -1.5 MB with faint heatmap-gradient banding.
+PALETTE_COLORS = 256
+
+# --- B. PAGE LAYOUT  (points; 72 pt = 1 in) -----------------------------
+W, H = 720, 620          # page width and height in points
+M, TITLE_H = 12, 28      # margin and title bar height in points
+gx, gy = W / 2, (H - TITLE_H) / 2  # grid center x; grid cell height (below title)
+
+# --- C. CONTENT / ANALYSIS  (change what's shown, not the file size) ----
+PATHWAY_TOP_N   = 5           # number of strongest upstream paths drawn (top-middle)
+RF_THR_MODE     = 'cumsum'    # RF alpha-hull threshold mode (top-right)
+RF_REMOVE_FRAC  = 0.6         # RF alpha-hull cumulative-mass cutoff
+SHOW_RF_ELLIPSE = False       # overlay the 2D-Gaussian RF-ellipse fit + its center on the ARF panel
+
+# split_rect_lr, insert_title_italic_f and add_segment_labels are imported from
+# utils.pdf_report.
+
+
+# %% [markdown]
+# ## helper functions
+
+# %%
 # Export helpers (mpl/plotly -> PDF bytes, PDF tiling) are imported from
 # utils.pdf_report; only the gallery-specific stats table stays here.
 
@@ -278,7 +300,7 @@ def make_stats_table_fig(row, cl, figsize=(3.2, 2.6)):
     """Build a matplotlib table of per-instance stats (vector, for `place`)."""
     rows = [
         ("instance",           str(row['instance'])),
-        ("cell count",         _fmt(row['bodyId_count'], "{:.0f}")),
+        ("cell count",         _fmt(row['count'], "{:.0f}")),
         ("pred. NT",           str(row['nt'])),
         ("VCBN cluster",            f'cc{cl}'),
         ("median layer",    _fmt(row['ht'])),
@@ -304,6 +326,16 @@ def make_stats_table_fig(row, cl, figsize=(3.2, 2.6)):
     return fig
 
 
+def quadrants():
+    """Return the four fitz.Rect quadrants (TL, TR, BL, BR) using the page-layout
+    knobs (W, H, M, TITLE_H, gx, gy) from the settings cell."""
+    tl = fitz.Rect(M,         TITLE_H + M,        gx - M/2, TITLE_H + gy - M/2)
+    tr = fitz.Rect(gx + M/2,  TITLE_H + M,        W - M,    TITLE_H + gy - M/2)
+    bl = fitz.Rect(M,         TITLE_H + gy + M/2, gx - M/2, H - M)
+    br = fitz.Rect(gx + M/2,  TITLE_H + gy + M/2, W - M,    H - M)
+    return tl, tr, bl, br
+
+
 # %%
 # 2D gaussian, prob mass (cumsum) within one std contour, is ~0.39
 # PDF height (max) at one std is ~0.61
@@ -325,33 +357,6 @@ sign_to_color = colored_sign['color'].to_dict()
 # type_to_mg = dict(zip(cb_meta.cell_type, colored_main_groups.loc[cb_meta.main_groups, 'color']))
 mg = cb_meta.main_groups.where(cb_meta.main_groups.isin(colored_main_groups.index), 'other')
 type_to_mg = dict(zip(cb_meta.cell_type, colored_main_groups.loc[mg, 'color']))
-
-
-# %% [markdown]
-# ## make pdf
-
-# %%
-PATHWAY_TOP_N  = 5           # number of strongest upstream paths drawn (top-middle)
-RF_THR_MODE    = 'cumsum'    # RF alpha-hull threshold mode (top-right)
-RF_REMOVE_FRAC = 0.6         # RF alpha-hull cumulative-mass cutoff
-
-# --- page geometry (points; 72 pt = 1 in) ---------------------------------
-W, H = 720, 620          # page width and height in points
-M, TITLE_H = 12, 28      # margin and title bar height in points
-gx, gy = W / 2, (H - TITLE_H) / 2  # grid center x; grid cell height (below title)
-def quadrants():
-    tl = fitz.Rect(M,         TITLE_H + M,        gx - M/2, TITLE_H + gy - M/2)
-    tr = fitz.Rect(gx + M/2,  TITLE_H + M,        W - M,    TITLE_H + gy - M/2)
-    bl = fitz.Rect(M,         TITLE_H + gy + M/2, gx - M/2, H - M)
-    br = fitz.Rect(gx + M/2,  TITLE_H + gy + M/2, W - M,    H - M)
-    return tl, tr, bl, br
-
-# Palette size for the colour-indexing in the size-shrink cell (after the build).
-# 256 = full colormap fidelity; 128 ~= -1.5 MB with faint heatmap-gradient banding.
-PALETTE_COLORS   = 256
-
-# split_rect_lr, insert_title_italic_f and add_segment_labels are imported from
-# utils.pdf_report.
 
 
 # %%
@@ -430,10 +435,11 @@ def build_panels(row):
         marker_colorbar_title_text="effective weight",
         marker_colorbar_title_side="bottom",
     )
-    params_single_df = rf_fit.loc[rf_fit.instance == inst]
-    fig1 = plot_gaussian_params(params_single_df, example_bid=bodyId, fac=np.sqrt(3))
-    for trace in fig1.data[1:]:
-        fig_rf0.add_trace(trace)
+    if SHOW_RF_ELLIPSE:
+        params_single_df = rf_fit.loc[rf_fit.instance == inst]
+        fig1 = plot_gaussian_params(params_single_df, example_bid=bodyId, fac=np.sqrt(3))
+        for trace in fig1.data[1:]:
+            fig_rf0.add_trace(trace)
 
     thr_mode, remove_frac = RF_THR_MODE, RF_REMOVE_FRAC
     edge_points, edges, area, com, kept_points, used_frac, used_alpha = count_col_ahull(
@@ -452,7 +458,7 @@ def build_panels(row):
             marker=dict(color='blue', size=10, symbol='cross'),
             name='center of mass', hoverinfo='skip'))
     else:
-        print(f"multiple ahulls for bodyId {bodyId} ({thr_mode}, {remove_frac}), skipping panel")
+        print(f"no single alpha-hull for bodyId {bodyId} ({thr_mode}, {remove_frac}), skipping panel")
 
     return dict(inst=inst, bodyId=bodyId, cell_type=cell_type, cl=cl, frac=frac,
                 stats_fig=stats_fig, fig_path=fig_path,
@@ -522,7 +528,7 @@ def html_from_panels(p):
     )
     bar_div = fig_bar.to_html(full_html=False, include_plotlyjs='cdn')
     rf_div  = (p['fig_rf'].to_html(full_html=False, include_plotlyjs=False)
-               if p['fig_rf'] is not None else "<em>multiple alpha-hulls — RF panel skipped</em>")
+               if p['fig_rf'] is not None else "<em>no single alpha-hull — RF panel skipped</em>")
     stats_src = mpl_to_svg_b64(p['stats_fig'])
     path_src  = mpl_to_svg_b64(p['fig_path'])
     ant_src   = ("data:image/png;base64,"
@@ -559,74 +565,82 @@ def html_from_panels(p):
 
 
 
+# %% [markdown]
+# ## pdf driver
+
 # %%
-# --- driver -----------------------------------------------------------------
-MODE     = 'html_per_row'        # 'single_pdf' | 'pdf_per_row' | 'html_per_row'
-OUT_STEM = 'gallery_vcbn_abc'
+# for pdf, divide inst_cb into 5 parts to render 5 pdf files
+rows_ls = []
+n = len(inst_cb)
+for i in range(5):
+    rows_ls.append(inst_cb[i*n//5:(i+1)*n//5])
 
-rows     = inst_cb            # row selector
+print(len(rows_ls[0]), len(rows_ls[1]), len(rows_ls[2]), len(rows_ls[3]), len(rows_ls[4]))
 
-out_dir = Path(result_dir, OUT_STEM)
-pages_dir = out_dir / 'pages'          # html_per_row writes pages here; index.html sits in out_dir
-if MODE == 'pdf_per_row':
-    out_dir.mkdir(parents=True, exist_ok=True)
-elif MODE == 'html_per_row':
-    pages_dir.mkdir(parents=True, exist_ok=True)
+# %%
+# --- pdf driver ---------------------------------------------------------
+# ~10h
+# 'single_pdf'  -> one multi-page PDF for all instances (original behavior)
+# 'pdf_per_row' -> one PDF file per instance
+PDF_MODE = 'single_pdf'        # 'single_pdf' | 'pdf_per_row'
+OUT_STEM = 'gallery_vcbn'
+saved_pdfs = []                # consumed by the shrink-file-size cell below
 
-saved_pdfs = []                # consumed by the image-shrink cell; empty in html mode
+# select instances
+# rows = inst_cb            
 
-# Persistent Kaleido server: one Chrome reused across every fig.to_image(), so each
-# export is ~0.3s instead of paying ~5s Chrome cold-start per call. Only the PDF
-# modes rasterize plotly figures; interactive HTML uses fig.to_html (no kaleido).
-need_kaleido = MODE in ('single_pdf', 'pdf_per_row')
-if need_kaleido:
+for i, rows in enumerate(rows_ls):
+    print(f"Processing part {i+1} of {len(rows_ls)}, {len(rows)} instances")
+
+    out_dir = Path(result_dir, OUT_STEM)
+    if PDF_MODE == 'pdf_per_row':
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Persistent Kaleido server: one Chrome reused across every fig.to_image(), so each
+    # export is ~0.3s instead of paying ~5s Chrome cold-start per call. build_panels
+    # always rasterizes the anterior view via save_figure_anterior (fig.to_image()).
     try:
         kaleido.stop_sync_server()
     except Exception:
         pass
     kaleido.start_sync_server()
 
-out = fitz.open() if MODE == 'single_pdf' else None
+    out = fitz.open() if PDF_MODE == 'single_pdf' else None
 
-for i, row in rows.iterrows():
-    print(row['instance'])
-    p = build_panels(row)
-    if p is None:
-        continue
+    for _, row in rows.iterrows():
+        print(row['instance'])
+        p = build_panels(row)
+        if p is None:
+            continue
 
-    if MODE == 'single_pdf':
-        add_pdf_page(out, p)
-    elif MODE == 'pdf_per_row':
-        doc = fitz.open()
-        add_pdf_page(doc, p)
-        fp = out_dir / f"{safe_name(p['inst'])}.pdf"
-        doc.save(str(fp), garbage=4, deflate=True, deflate_images=True,
-                 deflate_fonts=True, clean=True)
-        doc.close()
-        saved_pdfs.append(fp)
-    elif MODE == 'html_per_row':
-        (pages_dir / f"{safe_name(p['inst'])}.html").write_text(html_from_panels(p), encoding='utf-8')
+        if PDF_MODE == 'single_pdf':
+            add_pdf_page(out, p)
+        else:
+            doc = fitz.open()
+            add_pdf_page(doc, p)
+            fp = out_dir / f"{safe_name(p['inst'])}.pdf"
+            doc.save(str(fp), garbage=4, deflate=True, deflate_images=True,
+                    deflate_fonts=True, clean=True)
+            doc.close()
+            saved_pdfs.append(fp)
 
-    print(f"Added {p['inst']} (bodyId {p['bodyId']})")
+        print(f"Added {p['inst']} (bodyId {p['bodyId']})")
 
-if need_kaleido:
     kaleido.stop_sync_server()             # release the persistent Chrome
 
-if MODE == 'single_pdf':
-    pdf_path = Path(result_dir, f'{OUT_STEM}.pdf')
-    # deflate_images Flate-compresses the (otherwise uncompressed) anterior-view rasters
-    # that dominate file size; lossless, ~13x smaller. garbage/clean prune orphans.
-    out.save(str(pdf_path), garbage=4, deflate=True, deflate_images=True,
-             deflate_fonts=True, clean=True)
-    saved_pdfs.append(pdf_path)
-    print(f"Saved {out.page_count} pages to {pdf_path}")
-elif MODE == 'pdf_per_row':
-    print(f"Saved {len(saved_pdfs)} PDF(s) to {out_dir}")
-else:
-    # build the searchable index over the pages just written (pages already in pages/)
-    from utils.gallery_index import build_gallery_index
-    build_gallery_index(out_dir, move=False)
-    print(f"Saved HTML file(s) to {pages_dir}; open {out_dir / 'index.html'}")
+    if PDF_MODE == 'single_pdf':
+        pdf_path = Path(result_dir, f'{OUT_STEM}_{i+1}.pdf')
+        # deflate_images Flate-compresses the (otherwise uncompressed) anterior-view rasters
+        # that dominate file size; lossless, ~13x smaller. garbage/clean prune orphans.
+        out.save(str(pdf_path), garbage=4, deflate=True, deflate_images=True,
+                deflate_fonts=True, clean=True)
+        saved_pdfs.append(pdf_path)
+        print(f"Saved {out.page_count} pages to {pdf_path}")
+    else:
+        print(f"Saved {len(saved_pdfs)} PDF(s) to {out_dir}")
+
+# %% [markdown]
+# ## shrink pdf
 
 # %%
 # --- shrink file size: rewrite embedded RGB rasters to 8-bit /Indexed colour -----
@@ -643,12 +657,67 @@ from PIL import Image
 # from utils.pdf_report.
 
 _mb = lambda f: round(Path(f).stat().st_size / 1e6, 2)
-# Shrink every PDF the gallery loop wrote (one file for 'single_pdf', many for
-# 'pdf_per_row'). `saved_pdfs` is empty in 'html_per_row' mode, so this is a no-op.
+# Shrink every PDF the pdf driver above wrote (one file for 'single_pdf', many for
+# 'pdf_per_row').
 for _f in saved_pdfs:
     _before = _mb(_f)
     _n = index_pdf_images(_f, colors=PALETTE_COLORS)
     print(f"{Path(_f).name}: indexed {_n} images, {_before} MB -> {_mb(_f)} MB  (integrity check passed)")
+
+# %% [markdown]
+# ## html driver
+
+# %%
+# --- html driver ---------------------------------------------------------
+# ~7 h
+# one interactive HTML page per instance (plotly bar + RF stay zoomable/hoverable;
+# matplotlib panels as SVG, anterior as PNG)
+OUT_STEM = 'gallery_vcbn'
+rows = inst_cb            # row selector
+
+out_dir = Path(result_dir, OUT_STEM)
+pages_dir = out_dir / 'pages'          # writes pages here; index.html sits in out_dir
+pages_dir.mkdir(parents=True, exist_ok=True)
+
+# Persistent Kaleido server: build_panels always rasterizes the anterior view via
+# save_figure_anterior (fig.to_image()), even though the RF/bar panels here stay
+# native HTML (no kaleido export needed for those).
+try:
+    kaleido.stop_sync_server()
+except Exception:
+    pass
+kaleido.start_sync_server()
+
+import navis
+import warnings
+
+# Both warnings below are expected side effects of this cell's design (persistent
+# Kaleido server; RF hull-fitting on column-less instances) — suppress just here so
+# the pdf driver cell above still surfaces the hull-fitting warning when relevant.
+_prev_pbar_hide = navis.config.pbar_hide
+navis.config.pbar_hide = True   # silence navis's per-mesh/skeleton progress bars from plot_cns
+try:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"The kopts argument is ignored",
+                                 category=UserWarning)
+        warnings.filterwarnings("ignore", message=r"Dropping \d+ entries without finite coordinates",
+                                 category=UserWarning)
+        for i, row in rows.iterrows():
+            print(row['instance'])
+            p = build_panels(row)
+            if p is None:
+                continue
+            (pages_dir / f"{safe_name(p['inst'])}.html").write_text(html_from_panels(p), encoding='utf-8')
+            print(f"Added {p['inst']} (bodyId {p['bodyId']})")
+finally:
+    navis.config.pbar_hide = _prev_pbar_hide
+
+kaleido.stop_sync_server()             # release the persistent Chrome
+
+# build the searchable index over the pages just written (pages already in pages/)
+from utils.gallery_index import build_gallery_index
+build_gallery_index(out_dir, move=False)
+print(f"Saved HTML file(s) to {pages_dir}; open {out_dir / 'index.html'}")
 
 # %% [markdown]
 # # End

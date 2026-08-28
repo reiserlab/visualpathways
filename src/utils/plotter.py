@@ -2,6 +2,7 @@ import pickle
 import io
 import os
 import re
+import time
 import unicodedata
 from pathlib import Path
 import logging
@@ -28,10 +29,43 @@ from neuprint import NeuronCriteria as NC
 import navis
 import navis.interfaces.neuprint as neu
 import cloudvolume as cv
+import cloudfiles.monitoring as _cf_monitoring
+import kaleido
 
 from utils.ng_view import NG_View
 
 logging.getLogger('navis').setLevel(logging.WARN)
+
+
+def _patched_transmission_monitor_end_io(self, flight_id, num_bytes):
+    # cloud-files truncates transfer start/end times to microseconds and feeds them to
+    # an IntervalTree that rejects zero-length intervals. A transfer completing within
+    # the same microsecond (routine for tiny, already-cached fetches like mesh/skeleton
+    # info JSON) then raises ValueError("Null Interval objects not allowed"). We don't
+    # use the bandwidth-monitoring stats this feeds, so nudge end_us forward by 1 to
+    # keep the interval non-empty rather than patch the vendored intervaltree/cloud-files
+    # packages on disk.
+    end_us = int(time.monotonic() * 1e6)
+    with self._lock:
+        start_us = int(self._in_flight.pop(flight_id) * 1e6)
+        if end_us <= start_us:
+            end_us = start_us + 1
+        self._in_flight_bytes -= num_bytes
+        self._intervaltree.addi(start_us, end_us, [flight_id, num_bytes])
+        self._total_bytes_landed += num_bytes
+
+
+_cf_monitoring.TransmissionMonitor.end_io = _patched_transmission_monitor_end_io
+
+
+def _ensure_kaleido_server():
+    # `fig.to_image()` otherwise spins up and tears down a fresh headless-Chrome
+    # subprocess on every single call (kaleido's "oneshot" mode) — slow across a
+    # per-neuron gallery loop, and the Windows subprocess teardown occasionally
+    # raises RuntimeError("Couldn't close or kill browser subprocess"). Starting
+    # kaleido's persistent sync server once reuses one browser for the whole
+    # session instead; kaleido registers its own atexit cleanup for it.
+    kaleido.start_sync_server(silence_warnings=True)
 
 
 def slugify(value, to_lower=True, allow_unicode=False):
@@ -168,6 +202,7 @@ def get_mesh(
     body_id:int
   , ignore_cache:bool=False
   , lod:int=None
+  , save_cache:bool=True
 ) -> navis.NeuronList:
     """
     Retrieve mesh for neuron.
@@ -188,6 +223,10 @@ def get_mesh(
         (e.g. ~700k vertices); a higher integer (e.g. `2`) fetches a coarser, much
         lighter mesh — useful when rendering many neurons at once. The returned
         coordinates are in the 8 nm-voxel frame regardless of `lod`. Cached per-LOD.
+    save_cache : bool, default = True
+        When disabled, a freshly-fetched mesh is not written to `cache/meshes` — useful
+        for one-off fetches (e.g. large batches of body IDs used only once) that would
+        otherwise fill the cache with entries you'll never reuse.
 
     Returns
     -------
@@ -198,7 +237,6 @@ def get_mesh(
     assert os.environ.get('SEGMENTATION_SOURCE'),\
         "Please set the `SEGMENTATION_SOURCE` variable in your environment."
     cachedir = Path(find_dotenv()).parent / "cache" / "meshes"
-    cachedir.mkdir(parents=True, exist_ok=True)
     mesh_fn = cachedir / (f"ms_{body_id}.pickle" if lod is None else f"ms_{body_id}_lod{lod}.pickle")
     if not ignore_cache and mesh_fn.is_file():
         with mesh_fn.open('rb') as mesh_fh:
@@ -209,8 +247,10 @@ def get_mesh(
             NC(bodyId=body_id)
           , seg_source=os.environ['SEGMENTATION_SOURCE']
           , lod=lod)
-        with mesh_fn.open('wb') as mesh_fh:
-            pickle.dump(mesh, mesh_fh)
+        if save_cache:
+            cachedir.mkdir(parents=True, exist_ok=True)
+            with mesh_fn.open('wb') as mesh_fh:
+                pickle.dump(mesh, mesh_fh)
     return mesh
 
 
@@ -218,6 +258,7 @@ def get_meshes(
     body_ids:list[int]
   , ignore_cache:bool=False
   , lod:int=None
+  , save_cache:bool=True
 ) -> navis.NeuronList:
     """
     Retrieve mesh for list of neurons.
@@ -234,6 +275,9 @@ def get_meshes(
     lod : int, default = None
         Level of detail passed to `get_mesh()`. `None` = finest mesh; a higher integer
         (e.g. `2`) fetches lighter meshes, useful for rendering many neurons at once.
+    save_cache : bool, default = True
+        Passed to `get_mesh()`. Set `False` to skip writing freshly-fetched meshes to
+        `cache/meshes` (e.g. for large one-off batches you won't reuse).
 
     Returns
     -------
@@ -242,7 +286,7 @@ def get_meshes(
     """
     meshes = []
     for body_id in body_ids:
-        mesh = get_mesh(body_id, ignore_cache=ignore_cache, lod=lod)
+        mesh = get_mesh(body_id, ignore_cache=ignore_cache, lod=lod, save_cache=save_cache)
         meshes.append(mesh)
     return meshes
 
@@ -689,6 +733,7 @@ def show_figure(
     """
     fig.update_layout(showlegend=showlegend)
     if static:
+        _ensure_kaleido_server()
         img_bytes = fig.to_image(
             format="png"
           , width=width, height=height
@@ -738,6 +783,7 @@ def save_figure(
             paper_bgcolor='rgba(0,0,0,0)'
           , plot_bgcolor='rgba(0,0,0,0)'
         )
+    _ensure_kaleido_server()
     img_bytes = fig.to_image(
             format="png"
           , width=width, height=height
@@ -974,7 +1020,7 @@ def plot_cns(
     if show_skeletons:
         plotlist += [get_skeletons(bodyid)] # from madvisc.utils.plotter
     if show_meshes:
-        plotlist += [get_meshes(bodyid, lod=mesh_lod)]
+        plotlist += [get_meshes(bodyid, lod=mesh_lod, save_cache=False)]
     if show_shell:
         plotlist += [get_shell_cns()]
     if show_outline:

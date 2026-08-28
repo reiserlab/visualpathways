@@ -48,20 +48,24 @@ def _eyemap(data_dir: Path) -> Path:
 
 def fetch_connectivity(client: Client | None = None) -> pd.DataFrame:
     """Download all Neuron→Neuron adjacencies (type IS NOT NULL on both ends),
-    drop LA(R)/LA(L) except the L1/L2/L3 ↔ L4 reciprocal lamina-cartridge
-    edges (without these, L4's dominant visual input is absent and downstream
-    polarity/propagation features collapse onto medulla-only partners).
-    Collapse per bodyId pair into a flat edge list."""
+    drop every LA(R)/LA(L) row, and collapse per bodyId pair into a flat
+    edge list."""
     neu, adj = fetch_adjacencies(NC(type=NotNull), NC(type=NotNull), client=client)
-    type_by_bid = dict(zip(neu["bodyId"], neu["type"]))
-    pre_t = adj["bodyId_pre"].map(type_by_bid)
-    post_t = adj["bodyId_post"].map(type_by_bid)
     in_lamina = adj["roi"].isin(["LA(R)", "LA(L)"])
-    keep_lamina = in_lamina & (
-        (pre_t.isin(["L1", "L2", "L3"]) & (post_t == "L4"))
-        | ((pre_t == "L4") & post_t.isin(["L1", "L2", "L3"]))
-    )
-    adj = adj.loc[(~in_lamina) | keep_lamina, ["bodyId_pre", "bodyId_post", "weight"]]
+
+    # Optional, keep the L1/L2/L3 ↔ L4 reciprocal lamina-cartridge edges 
+    # It will change tot_weight normalization and every downstream
+    # cache, so it would require a full s1→s5 rebuild (and the FlyWire analog
+    # `s1_flywirefafb_data.py` mirrors the drop-all behavior — update both).
+    # type_by_bid = dict(zip(neu["bodyId"], neu["type"]))
+    # pre_t = adj["bodyId_pre"].map(type_by_bid)
+    # post_t = adj["bodyId_post"].map(type_by_bid)
+    # keep_lamina = in_lamina & (
+    #     (pre_t.isin(["L1", "L2", "L3"]) & (post_t == "L4"))
+    #     | ((pre_t == "L4") & post_t.isin(["L1", "L2", "L3"]))
+    # )
+    
+    adj = adj.loc[(~in_lamina), ["bodyId_pre", "bodyId_post", "weight"]]
     adj["weight"] = adj["weight"].astype(np.int32)
     return adj.groupby(["bodyId_pre", "bodyId_post"], as_index=False, sort=False)["weight"].sum()
 

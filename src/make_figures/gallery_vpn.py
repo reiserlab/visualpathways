@@ -2,15 +2,12 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.16.0
-#   kernelspec:
-#     display_name: ol-analysis
-#     language: python
-#     name: python3
 # ---
 
 # %%
@@ -29,7 +26,6 @@ A script with this code uses the location of the `.env` file as the anchor for
 the whole project (= PROJECT_ROOT). Afterwards, code inside the `src` directory
 are available for import.
 """
-import torch
 from pathlib import Path
 import sys
 from dotenv import load_dotenv, find_dotenv
@@ -60,8 +56,8 @@ import connectome_interpreter as ci
 # %%
 from utils.projection_plots import plot_extreme_projection_xy
 from utils.ol_rf import compute_rf, count_col_ahull
-from utils import ol_rf, vic
-from utils.plotting_functions import plot_gaussian_params
+from utils import core_data, ol_rf, vic
+from utils.figure_helpers import plot_gaussian_params
 from utils.plotter import plot_cns, save_figure_anterior
 from utils.pdf_report import (
     natural_sort_key, safe_name, _fmt, split_rect_lr, insert_title_italic_f,
@@ -73,7 +69,7 @@ from utils.gallery_common import make_bar_fig
 # %%
 from utils.config import (CACHE_DIR, CACHE_PROC_DIR, DATA_DIR, DATASET, PARAMS_DIR)
 
-result_dir = Path(PROJECT_ROOT, 'results', 'quan_propagation')
+result_dir = Path(PROJECT_ROOT, 'results')
 result_dir.mkdir(parents=True, exist_ok=True)
 
 cache_dir = DATA_DIR
@@ -169,10 +165,13 @@ rf_size_median = rf_size.groupby('instance').agg({
 }).reset_index()
 rf_size_median['bodyId'] = rf_size_median['bodyId'].astype(int)
 
-# ht_median = ht.groupby(['instance'])['ht'].median().reset_index()
-# vic_median = vic.groupby(['instance', 'main_groups'])['VIC'].median().reset_index()
-ht_median = meta_cb_vpn.groupby(['instance', 'main_groups'])['ht'].median().reset_index()
-vic_median = meta_cb_vpn.groupby(['instance', 'main_groups'])['VIC'].median().reset_index()
+# page stats (cell count, median layer, median VIC) come from the same
+# type-level sources TableS1 uses, so the gallery pages and
+# results/tables/TableS1_VPN_in_out_summary.csv always agree.
+_ol_flow_type = core_data.get_ol_flow_type()
+ht_median = (_ol_flow_type[['instance', 'hitting_time']]
+             .rename(columns={'hitting_time': 'ht'}))
+vic_median = vic.get_ol_type_vic()[['instance', 'VIC']]
 
 # %%
 
@@ -183,21 +182,9 @@ vic_median = meta_cb_vpn.groupby(['instance', 'main_groups'])['VIC'].median().re
 step0 = scipy.sparse.load_npz(DATA_DIR / f'{DATASET}_r_lat_flow_0.npz').tocsr()
 
 # %% [markdown]
-# ## load effwt
-
-# %%
-
-# %% [markdown]
 # ## ol types
 #
 # R-dominant ?
-
-# %%
-# sort — natural_sort_key is imported from utils.pdf_report
-
-# # reorder rf_size_median by 'instance' value (case-insensitive, natural number sorting)
-# rf_size_median = rf_size_median.sort_values(by='instance', key=lambda x: x.map(natural_sort_key)).reset_index(drop=True)
-
 
 # %%
 # cell type table
@@ -218,6 +205,10 @@ print(inst_vp.shape)
 inst_vp = pd.merge(inst_vp, ht_median[['instance','ht']], on='instance', how='left')
 print(inst_vp.shape)
 inst_vp = pd.merge(inst_vp, vic_median[['instance','VIC']], on='instance', how='left')
+print(inst_vp.shape)
+# displayed cell count = connectome flow count (same as TableS1), not the
+# 'no. of cells' column of the Nern et al. supplementary table
+inst_vp = pd.merge(inst_vp, _ol_flow_type[['instance','count']], on='instance', how='left')
 print(inst_vp.shape)
 
 # %% [markdown]
@@ -338,7 +329,7 @@ mpl.rcParams['savefig.dpi'] = HEATMAP_DPI
 
 
 # %% [markdown]
-# ## helper
+# ## helper functions
 
 # %%
 # _fmt imported from utils.pdf_report.
@@ -347,7 +338,7 @@ def make_stats_table_fig(row, figsize=(3.2, 2.6)):
     """Build a matplotlib table of per-instance stats (vector, for `place`)."""
     rows = [
         ("instance",           str(row['instance'])),
-        ("cell count",         _fmt(row['no. of cells'], "{:.0f}")),
+        ("cell count",         _fmt(row['count'], "{:.0f}")),
         ("pred. NT",           str(row['predicted neurotransmitter'])),
         ("median hitting time",    _fmt(row['ht'])),
         ("median VIC",         _fmt(row['VIC'], "{:.4f}")),
@@ -441,12 +432,16 @@ def make_vic_hop_figs(
         c = c.groupby('bodyId_post').agg({'weight': 'sum'}).reset_index()
         return c[c['weight'] > min_weight]
 
+    # bodyId -> instance lookup, built once. Replaces a per-row
+    # meta_cb_vpn.bodyId == x scan (O(n_targets x n_meta)); identical result
+    # because bodyId is unique within meta_cb_vpn.
+    _bid_to_inst = dict(zip(meta_cb_vpn['bodyId'], meta_cb_vpn['instance']))
+
     def _add_instance(df):
         """Attach each target's instance and build the 'instance: value' list
         (ranked by median propagated value) used for the panel annotation."""
         df = df.copy()
-        df['instance'] = df['bodyId'].map(
-            lambda x: meta_cb_vpn.loc[meta_cb_vpn.bodyId == x, 'instance'].values[0])
+        df['instance'] = df['bodyId'].map(_bid_to_inst)
         df_inst = (df.groupby('instance').agg({'value': 'median'})
                    .reset_index().sort_values('value', ascending=False))
         top = [f"{r['instance']}: {r['value']:.2g}"
@@ -517,6 +512,8 @@ def grid_cells(ncols=NCOLS, nrows=NROWS):
 #  (Kept consistent with gallery_vcbn.ipynb; will be factored out later.)
 # =======================================================================
 import base64
+import kaleido   # imported once here so the pdf/html driver cells below don't
+                 # depend on each other (either can be run standalone)
 
 # stacked-bar strip aspect (PDF points; also the px aspect for HTML)
 BAR_W, BAR_H = 36, 260
@@ -559,7 +556,7 @@ def make_rf_fig(inst, bodyId, *, sizing=None):
     `sizing` is forwarded to ci.hex_heatmap's default_sizing so the figure is
     generated at the wanted on-screen size (markers scale with it -> no overlap).
     Pass None for the native PDF size. Returns None if the alpha-hull is not a
-    single polygon (panel is then skipped, as before).
+    single polygon (panel is then left blank).
     """
     df = effwt_visr_7[str(bodyId)].copy()
     fig_rf0 = ci.hex_heatmap(
@@ -581,7 +578,7 @@ def make_rf_fig(inst, bodyId, *, sizing=None):
     edge_points, edges, area, com, kept_points, used_frac, used_alpha = count_col_ahull(
         df, thr_mode=RF_THR_MODE, remove_frac=RF_REMOVE_FRAC)
     if edges is None or len(edge_points) != 1:
-        print(f"multiple ahulls for bodyId {bodyId} "
+        print(f"no single alpha-hull for bodyId {bodyId} "
               f"({RF_THR_MODE}, {RF_REMOVE_FRAC}), skipping panel")
         return None
 
@@ -598,10 +595,6 @@ def make_rf_fig(inst, bodyId, *, sizing=None):
         name='center of mass', hoverinfo='skip'))
     return fig_rf
 
-
-
-# %% [markdown]
-# ## build panels
 
 # %%
 # 2D gaussian, prob mass (cumsum) within one std contour, is ~0.39
@@ -636,7 +629,7 @@ def build_panels(row):
     bodyId    = int(row['bodyId'])
     inst      = row['instance']
     cell_type = row['cell_type']
-    count     = row['no. of cells']
+    count     = row['count']
 
     clu = clusters[clusters.instance == inst]['cluster'].values
     if len(clu) == 0:
@@ -853,42 +846,36 @@ def html_from_panels(p):
 
 
 # %% [markdown]
-# ## driver
+# ## pdf driver
 
 # %%
-# Build the gallery. Output MODE controls how pages are written:
-#   'single_pdf'   -> one multi-page PDF for all instances (original behavior)
-#   'pdf_per_row'  -> one PDF file per instance
-#   'html_per_row' -> one interactive HTML per instance (plotly bar + RF stay
-#                     zoomable/hoverable; matplotlib panels as SVG, anterior as PNG)
-import kaleido
+# --- pdf driver ---------------------------------------------------------
+# ~60 min
+# 'single_pdf'  -> one multi-page PDF for all instances (original behavior)
+# 'pdf_per_row' -> one PDF file per instance
+# (kaleido is imported once in the helper functions section above)
 
-MODE     = 'html_per_row'        # 'single_pdf' | 'pdf_per_row' | 'html_per_row'
+PDF_MODE = 'single_pdf'        # 'single_pdf' | 'pdf_per_row'
 OUT_STEM = 'gallery_vpn'
 # rows     = sampled_meta          # row selector; use inst_vp for the full gallery
 rows = inst_vp
 
 out_dir = Path(result_dir, OUT_STEM)
-pages_dir = out_dir / 'pages'    # html_per_row writes pages here; index.html sits in out_dir
-if MODE == 'pdf_per_row':
+if PDF_MODE == 'pdf_per_row':
     out_dir.mkdir(parents=True, exist_ok=True)
-elif MODE == 'html_per_row':
-    pages_dir.mkdir(parents=True, exist_ok=True)
 
-saved_pdfs = []                  # consumed by the image-shrink cell; empty in html mode
+saved_pdfs = []                  # consumed by the shrink-file-size cell below
 
 # Persistent Kaleido server: one Chrome reused across every fig.to_image(), so each
-# export is ~0.3s instead of ~5s cold-start. Only the PDF modes rasterize plotly
-# figures; interactive HTML uses fig.to_html (no kaleido).
-need_kaleido = MODE in ('single_pdf', 'pdf_per_row')
-if need_kaleido:
-    try:
-        kaleido.stop_sync_server()
-    except Exception:
-        pass
-    kaleido.start_sync_server()
+# export is ~0.3s instead of ~5s cold-start. build_panels always rasterizes the
+# anterior view via save_figure_anterior (fig.to_image()).
+try:
+    kaleido.stop_sync_server()
+except Exception:
+    pass
+kaleido.start_sync_server()
 
-out = fitz.open() if MODE == 'single_pdf' else None
+out = fitz.open() if PDF_MODE == 'single_pdf' else None
 
 for i, row in rows.iterrows():
     print(row['instance'])
@@ -896,9 +883,9 @@ for i, row in rows.iterrows():
     if p is None:
         continue
 
-    if MODE == 'single_pdf':
+    if PDF_MODE == 'single_pdf':
         add_pdf_page(out, p)
-    elif MODE == 'pdf_per_row':
+    else:
         doc = fitz.open()
         add_pdf_page(doc, p)
         fp = out_dir / f"{safe_name(p['inst'])}.pdf"
@@ -906,28 +893,19 @@ for i, row in rows.iterrows():
                  deflate_fonts=True, clean=True)
         doc.close()
         saved_pdfs.append(fp)
-    elif MODE == 'html_per_row':
-        (pages_dir / f"{safe_name(p['inst'])}.html").write_text(
-            html_from_panels(p), encoding='utf-8')
 
     print(f"Added {p['inst']} (bodyId {p['bodyId']})")
 
-if need_kaleido:
-    kaleido.stop_sync_server()             # release the persistent Chrome
+kaleido.stop_sync_server()             # release the persistent Chrome
 
-if MODE == 'single_pdf':
+if PDF_MODE == 'single_pdf':
     pdf_path = Path(result_dir, f'{OUT_STEM}.pdf')
     out.save(str(pdf_path), garbage=4, deflate=True, deflate_images=True,
              deflate_fonts=True, clean=True)
     saved_pdfs.append(pdf_path)
     print(f"Saved {out.page_count} pages to {pdf_path}")
-elif MODE == 'pdf_per_row':
-    print(f"Saved {len(saved_pdfs)} PDF(s) to {out_dir}")
 else:
-    # build the searchable index over the pages just written
-    from utils.gallery_index import build_gallery_index
-    build_gallery_index(out_dir, move=False)
-    print(f"Saved HTML file(s) to {pages_dir}; open {out_dir / 'index.html'}")
+    print(f"Saved {len(saved_pdfs)} PDF(s) to {out_dir}")
 
 
 # %% [markdown]
@@ -948,14 +926,67 @@ from PIL import Image
 # from utils.pdf_report.
 
 _mb = lambda f: round(Path(f).stat().st_size / 1e6, 2)
-# Shrink every PDF the gallery loop wrote (one file for 'single_pdf', many for
-# 'pdf_per_row'). `saved_pdfs` is empty in 'html_per_row' mode, so this is a no-op.
+# Shrink every PDF the pdf driver above wrote (one file for 'single_pdf', many for
+# 'pdf_per_row').
 for _f in saved_pdfs:
     _before = _mb(_f)
     _n = index_pdf_images(_f, colors=PALETTE_COLORS)
     print(f"{Path(_f).name}: indexed {_n} images, {_before} MB -> {_mb(_f)} MB  (integrity check passed)")
 
+# %% [markdown]
+# ## html driver
+
 # %%
+# --- html driver ---------------------------------------------------------
+# ~60 min
+# one interactive HTML page per instance (plotly bar + RF stay zoomable/hoverable;
+# matplotlib panels as SVG, anterior as PNG)
+OUT_STEM = 'gallery_vpn'
+rows = inst_vp
+
+out_dir = Path(result_dir, OUT_STEM)
+pages_dir = out_dir / 'pages'    # writes pages here; index.html sits in out_dir
+pages_dir.mkdir(parents=True, exist_ok=True)
+
+# Persistent Kaleido server: build_panels always rasterizes the anterior view via
+# save_figure_anterior (fig.to_image()), even though the RF/bar panels here stay
+# native HTML (no kaleido export needed for those).
+try:
+    kaleido.stop_sync_server()
+except Exception:
+    pass
+kaleido.start_sync_server()
+
+import warnings
+
+# Both warnings below are expected side effects of this cell's design (persistent
+# Kaleido server; RF hull-fitting on column-less instances) — suppress just here so
+# the pdf driver cell above still surfaces the hull-fitting warning when relevant.
+_prev_pbar_hide = navis.config.pbar_hide
+navis.config.pbar_hide = True   # silence navis's per-mesh/skeleton progress bars from plot_cns
+try:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"The kopts argument is ignored",
+                                 category=UserWarning)
+        warnings.filterwarnings("ignore", message=r"Dropping \d+ entries without finite coordinates",
+                                 category=UserWarning)
+        for i, row in rows.iterrows():
+            print(row['instance'])
+            p = build_panels(row)
+            if p is None:
+                continue
+            (pages_dir / f"{safe_name(p['inst'])}.html").write_text(
+                html_from_panels(p), encoding='utf-8')
+            print(f"Added {p['inst']} (bodyId {p['bodyId']})")
+finally:
+    navis.config.pbar_hide = _prev_pbar_hide
+
+kaleido.stop_sync_server()             # release the persistent Chrome
+
+# build the searchable index over the pages just written
+from utils.gallery_index import build_gallery_index
+build_gallery_index(out_dir, move=False)
+print(f"Saved HTML file(s) to {pages_dir}; open {out_dir / 'index.html'}")
 
 # %% [markdown]
 # # End

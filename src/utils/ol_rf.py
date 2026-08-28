@@ -1,20 +1,9 @@
-
-"""
-This cell does the initial project setup.
-If you start a new script or notebook, make sure to copy & paste this part.
-
-A script with this code uses the location of the `.env` file as the anchor for
-the whole project (= PROJECT_ROOT). Afterwards, code inside the `src` directory
-are available for import.
-"""
-from pathlib import Path
-import sys
-from dotenv import find_dotenv
-PROJECT_ROOT = Path(find_dotenv()).parent
-sys.path.append(str(PROJECT_ROOT.joinpath('src')))
+"""Receptive-field utilities for OL neurons (input RFs, ellipse fits, alpha-hull
+column extents). Imported as a `utils` submodule — expects `src` on `sys.path`
+(handled by the entry-point scripts/notebooks)."""
 
 from utils.config import (
-    DATA_DIR, DATASET, EYEMAP_DIR, PARAMS_DIR, SIDE, SIDE_CHAR,
+    DATA_DIR, DATASET, PARAMS_DIR, SIDE_CHAR,
 )
 
 import pandas as pd
@@ -81,9 +70,18 @@ def count_col_ahull(df, thr_mode="max", remove_frac=0.1, min_remove_frac=0.0,
     if isinstance(df, pd.DataFrame):
         df = df.squeeze(axis=1)
 
-    # get xy coord from index
-    xy_coord = df.index.to_series().str.split(',', expand=True).astype(float)
+    # get xy coord from index; entries without a finite 'h,v' coordinate (e.g.
+    # the 'nan' group of column-less visual neurons) would NaN-poison ConvexHull
+    # at every retry, so drop them up front
+    xy_coord = df.index.to_series().str.split(',', expand=True).apply(
+        pd.to_numeric, errors='coerce')
     xy_coord.columns = ['x', 'y']
+    _valid = np.isfinite(xy_coord).all(axis=1)
+    if not _valid.all():
+        warnings.warn(f"Dropping {int((~_valid).sum())} entries without finite "
+                      "coordinates before hull fitting.")
+        df = df[_valid.values]
+        xy_coord = xy_coord[_valid.values]
 
     # thresholding effective weight points for alpha shape, "max" or "cumsum".
     # remove_frac starts at the user-supplied value, but if the kept points are
@@ -176,10 +174,12 @@ def count_col_ahull(df, thr_mode="max", remove_frac=0.1, min_remove_frac=0.0,
     # go back to the original coord
     xy_coord_kept.loc[:, 'x'] = xy_coord_kept['x'] / (3/2)
     xy_coord_kept.loc[:, 'y'] = xy_coord_kept['y'] / (np.sqrt(3)/2)
-    if len(edge_points) == 1:
-        edge_points[0][:, 0] = edge_points[0][:, 0] / (3/2)
-        edge_points[0][:, 1] = edge_points[0][:, 1] / (np.sqrt(3)/2)
-    else:
+    # un-morph every hull polygon (not just the single-hull case) so callers can
+    # overlay them on the original square-grid coordinates
+    for _ep in edge_points:
+        _ep[:, 0] = _ep[:, 0] / (3/2)
+        _ep[:, 1] = _ep[:, 1] / (np.sqrt(3)/2)
+    if len(edge_points) > 1:
         warnings.warn("Multiple ahulls.")
 
     return edge_points, edges, area, (com_x, com_y), xy_coord_kept, cur_frac, used_alpha
@@ -708,8 +708,8 @@ def get_input_rf_raw_ol(
     `effective weight`, with `amp = sum(effective weight)`. Cleaned via
     `_clean_rf_params`, cached as parquet.
 
-    The raw parquet is produced by `lib/malecns.fetch_input_syn_per_col`
-    (called from `base_cache/s1_malecns_data.ipynb` section 6). If you rerun the
+    The raw parquet is produced by `setup_data/malecns.fetch_input_syn_per_col`
+    (called from `setup_data/s1_malecns_data.ipynb` section 6). If you rerun the
     download, pass `force=True` to invalidate this cache.
     """
     from utils.external_rf import fit_rf_gaussian
@@ -852,7 +852,7 @@ def rebuild_input_rf_caches(
 ) -> None:
     """Force-rebuild the four input-RF derived caches in dependency order.
 
-    Run after re-fetching the input syn-per-column parquet (base_cache
+    Run after re-fetching the input syn-per-column parquet (setup_data
     s1_malecns_data section 6) or changing the RF-fitting code. Normal figure
     rendering does not need this: each get_* below lazily builds and caches on
     first call. Order matters -- rebuilding a comparison cache on top of a

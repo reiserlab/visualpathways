@@ -147,16 +147,6 @@ def plot_extreme_projection_xy(
 ) -> tuple[plt.Figure, plt.Axes, mpl.image.AxesImage]:
     """Plot a synapse-value heatmap with ROI outlines."""
 
-    def _grid_stat(values: pd.Series) -> float:
-        arr = np.asarray(values, dtype=float)
-        arr = arr[~np.isnan(arr)]
-        if arr.size <= agg_num:
-            return np.nan
-        n_keep = max(1, int(np.ceil(agg_frac * arr.size)))
-        arr_sorted = np.sort(arr)
-        sel = arr_sorted[-n_keep:] if agg == 'largest' else arr_sorted[:n_keep]
-        return float(np.mean(sel))
-
     # check df has required columns, x ,y, val
     if not isinstance(df, pd.DataFrame):
         raise ValueError("df must be a pandas DataFrame.")
@@ -191,19 +181,43 @@ def plot_extreme_projection_xy(
     if df.empty:
         raise ValueError('No data falls inside the requested plotting bounds.')
 
-    x_idx = np.digitize(df['x'], x_bins) - 1
-    y_idx = np.digitize(df['y'], y_bins) - 1
-    df = df.assign(x_grid=x_idx, y_grid=y_idx, val=df['val'])
+    x_idx = np.digitize(df['x'].to_numpy(), x_bins) - 1
+    y_idx = np.digitize(df['y'].to_numpy(), y_bins) - 1
+    vals = df['val'].to_numpy(dtype=float)
 
-    grid_stats = (
-        df.groupby(['x_grid', 'y_grid'])['val']
-        .agg(_grid_stat)
-        .reset_index()
-    )
-
+    # Per-bin statistic: mean of the top (agg='largest') or bottom (agg='smallest')
+    # `agg_frac` fraction of values in each bin. Vectorized equivalent of the former
+    # groupby(['x_grid','y_grid']).agg(_grid_stat) + iterrows fill (~10x faster: no
+    # per-bin Python call). Sort every point by (bin, value), keep the first
+    # ceil(agg_frac * count) within each bin, and average them; bins with
+    # count <= agg_num stay NaN (rendered black via cmap.set_bad).
     heatmap_data = np.full((ynbins, xnbins), np.nan, dtype=float)
-    for _, row in grid_stats.iterrows():
-        heatmap_data[int(row['y_grid']), int(row['x_grid'])] = row['val']
+    valid = (
+        ~np.isnan(vals)
+        & (x_idx >= 0) & (x_idx < xnbins)
+        & (y_idx >= 0) & (y_idx < ynbins)
+    )
+    if valid.any():
+        xi, yi, vv = x_idx[valid], y_idx[valid], vals[valid]
+        bin_id = yi * xnbins + xi
+        # sort within each bin: descending for 'largest', ascending for 'smallest'
+        signed = -vv if agg == 'largest' else vv
+        order = np.lexsort((signed, bin_id))
+        bin_sorted = bin_id[order]
+        val_sorted = vv[order]
+        nbin = xnbins * ynbins
+        counts = np.bincount(bin_sorted, minlength=nbin)
+        starts = np.zeros(nbin, dtype=np.int64)
+        starts[1:] = np.cumsum(counts)[:-1]
+        rank = np.arange(bin_sorted.size) - starts[bin_sorted]   # 0-based rank in bin
+        n_keep = np.minimum(
+            counts, np.maximum(1, np.ceil(agg_frac * counts).astype(np.int64)))
+        keep = rank < n_keep[bin_sorted]
+        sums = np.bincount(bin_sorted[keep], weights=val_sorted[keep], minlength=nbin)
+        occupied = counts > agg_num
+        flat = np.full(nbin, np.nan)
+        flat[occupied] = sums[occupied] / n_keep[occupied]
+        heatmap_data = flat.reshape(ynbins, xnbins)
 
     if vmin is None or vmax is None:
         finite_vals = heatmap_data[np.isfinite(heatmap_data)]

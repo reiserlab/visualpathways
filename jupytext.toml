@@ -6,3 +6,8 @@
 # a paired .ipynb).
 formats = "ipynb,py:percent"
 notebook_extensions = "ipynb"
+
+# Keep kernelspec out of the .py front-matter: kernel names are user-local
+# (each contributor registers their own env under any name), so syncing them
+# into the tracked .py files only produces meaningless diffs.
+notebook_metadata_filter = "-kernelspec"

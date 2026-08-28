@@ -458,7 +458,7 @@ def get_cb_cluster_tbars_per_roi(
     vic_thre: float = 5e-4, force: bool = False,
 ) -> pd.DataFrame:
     """Per-(CB-cluster, ROI) tbar count wide df (clusters × ROI) for the
-    `cb_clusters_rois` heatmap. Merges `tbar_VIC_forJudith.pkl` with CB
+    `cb_clusters_rois` heatmap. Merges `tbar_VIC_r.pkl` with CB
     cluster assignments via bodyId → instance → cluster."""
     def _compute():
         meta = get_meta(dataset=dataset, data_dir=data_dir)
@@ -466,7 +466,7 @@ def get_cb_cluster_tbars_per_roi(
             dataset=dataset, data_dir=data_dir, side_char=side_char,
             frac_thre=cb_frac_thre, vic_thre=vic_thre,
         )
-        tbar = pd.read_pickle(data_dir / "tbar_VIC_forJudith.pkl")
+        tbar = pd.read_pickle(data_dir / "tbar_VIC_r.pkl")
         tbar = tbar.merge(
             meta[["bodyId", "instance"]], on="bodyId", how="left",
         ).merge(

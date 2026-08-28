@@ -1,7 +1,7 @@
 """Map files produced by figures.ipynb plots onto per-panel filenames
 defined by paper_figs.xlsx, and distribute them into results/<folder>/.
 
-Naming rules (per panel, after dropping Blender/Neuroglancer/custom/AZ rows):
+Naming rules (per panel, after dropping Blender/Neuroglancer/custom rows):
   - 1 file in panel, no position label  -> <folder>_<panel>.<ext>
   - >1 files, no position label         -> <folder>_<panel>_<i>.<ext>
   - 1 file under a position             -> <folder>_<panel>_<position>.<ext>
@@ -37,7 +37,9 @@ XLSX = PARAMS_DIR / "paper_figs.xlsx"
 RESULTS = FIG_DIR
 HTML_DIR = FIG_DIR / "html_figures"
 
-EXTERNAL = {"Blender", "Neuroglancer", "custom", "AZ"}
+# Literal tags in the `results file` column marking panels with no
+# auto-distributable file; these rows are dropped from distribute().
+EXTERNAL = {"Blender", "Neuroglancer", "custom"}
 
 _LABEL_RE = re.compile(
     r"^(Main|SI)\s+Fig\.\s+(\d+)([a-z])?(?:\s+(left|right|top|bottom))?$"

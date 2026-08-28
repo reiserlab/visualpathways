@@ -1,7 +1,7 @@
-"""OL↔CB and binocular vicinity (VIC) cached data.
+"""OL↔CB and binocular visual-input contribution (VIC) cached data.
 
-Hosts visual-information-content (VIC) loaders that measure how much of a CB
-neuron's input traces back to the OL. Covers:
+Hosts visual-input contribution (VIC) loaders that measure how much of a
+CB neuron's input traces back to the OL. Covers:
 
 - OL → CB VIC: `get_ol_cb_vic_raw`, `get_ol_cb_vic_type`, `get_ol_type_vic`,
   `get_vcbn_types`
@@ -237,14 +237,14 @@ def get_roi_syn_vic(
 ) -> pd.DataFrame:
     """Per-synapse (bodyId, roi, VIC) records used by the coverage analysis.
 
-    Combines `tbar_VIC_forJudith.pkl` (continuous VIC on non-OL synapses)
+    Combines `tbar_VIC_r.pkl` (continuous VIC on non-OL synapses)
     with the four OL-side ROIs (`ME({S})`, `AME({S})`, `LO({S})`, `LOP({S})`)
     drawn from `{dataset}_OL_{side_char}_roi_counts.pkl`, expanded to
     per-synapse rows with VIC=1 (inside-OL is trivially fully visual).
     """
     def _compute():
         side_upper = side_char.upper()
-        tbar = pd.read_pickle(data_dir / "tbar_VIC_forJudith.pkl").rename(
+        tbar = pd.read_pickle(data_dir / "tbar_VIC_r.pkl").rename(
             columns={"vision": "VIC"}
         )
 

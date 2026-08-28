@@ -9,10 +9,13 @@ rather than defining inline:
 - `_instance_effective_n` — per-instance effective number of inputs
   (exp of Shannon entropy of the normalised feature vector), joined to cluster.
 - `_wrap` — wrap a label on hyphens / spaces for multi-line axis ticks.
+- `plot_gaussian_params` — RF-ellipse-fit scatter, used by the VPN/VCBN
+  galleries (former `utils/plotting_functions.py`, retired 2026-08-20).
 """
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 from connectome_interpreter.path_finding import find_paths_of_length, group_paths
 from connectome_interpreter import signed_effective_conn_from_paths
@@ -157,3 +160,52 @@ def _instance_effective_n(feature_df, cluster_df):
 
 def _wrap(name):
     return name.replace("-", "-\n").replace(" ", "\n")
+
+
+def plot_gaussian_params(params_df, example_bid=None, height=500, width=500, fac=1):
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=params_df['x0'].values,
+        y=fac*params_df['y0'].values,
+        mode='markers',
+        marker=dict(color='red', size=6, symbol='cross'),
+        showlegend=False,
+    ))
+    for i in range(params_df.shape[0]):
+        params_single_df = params_df.iloc[i]
+        if params_single_df.bodyId==example_bid:
+            line_width=4
+            fig.add_trace(go.Scatter(
+                x=[params_single_df['x0']],
+                y=[fac*params_single_df['y0']],
+                mode='markers',
+                marker=dict(color='red', size=10, symbol='cross'),
+                showlegend=False,
+            ))
+        else:
+            line_width=1
+        fig.add_trace(go.Scatter(
+            x=params_single_df['x0'] +\
+                params_single_df['a']*np.cos(params_single_df['phi'])*np.cos(np.linspace(0, 2*np.pi, 20)) - \
+                params_single_df['b']*np.sin(params_single_df['phi'])*np.sin(np.linspace(0, 2*np.pi, 20)),
+            y=fac*params_single_df['y0'] +\
+                fac*params_single_df['b']*np.cos(params_single_df['phi'])*np.sin(np.linspace(0, 2*np.pi, 20)) + \
+                fac*params_single_df['a']*np.sin(params_single_df['phi'])*np.cos(np.linspace(0, 2*np.pi, 20)),
+            mode='lines',
+            line=dict(color='red', width=line_width),
+            showlegend=False,
+        ))
+    fig.update_yaxes(scaleanchor = "x", scaleratio = 1)
+    fig.update_layout(
+        font={
+            "family":'Arial'
+            , "size" : 14
+        }
+        , paper_bgcolor="rgba(255,255,255,255)"
+        , plot_bgcolor="rgba(255,255,255,255)"
+        , height=500
+        , width=width
+    )
+
+    return fig

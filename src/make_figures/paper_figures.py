@@ -2,15 +2,12 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.16.0
-#   kernelspec:
-#     display_name: olc2
-#     language: python
-#     name: olc2
 # ---
 
 # %% [markdown]
@@ -27,6 +24,29 @@
 # The **flywire Main 2d/4d** section runs last on purpose: it monkeypatches the
 # shared `core_data` / `polarity` loaders for the flywire dataset, so it must
 # come after every malecns polarity panel.
+#
+# Most cells run under ~10 min.
+
+# %% [markdown]
+# # Load shared modules
+
+# %%
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.cwd().resolve().parent if Path.cwd().name == 'make_figures' else Path.cwd().resolve()))
+
+import importlib
+import pandas as pd
+import numpy as np
+
+from utils import config
+from utils.palettes import load_colors
+from utils import cb_data, core_data, ol_data, ol_rf, vic, polarity
+from utils import plotting as plot
+plot = importlib.reload(plot)
+from make_figures import figures as pf
+
+plot.set_html_output(True)
 
 # %% [markdown]
 # # Table of contents
@@ -60,24 +80,6 @@
 # - [SI Fig. 14 — flywire](#si-14)
 #
 # - [Parity check](#parity-check)
-
-# %%
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path.cwd().resolve().parent if Path.cwd().name == 'make_figures' else Path.cwd().resolve()))
-
-import importlib
-import pandas as pd
-import numpy as np
-
-from utils import config
-from utils.palettes import load_colors
-from utils import cb_data, core_data, ol_data, ol_rf, vic, polarity
-from utils import plotting as plot
-plot = importlib.reload(plot)
-from make_figures import figures as pf
-
-plot.set_html_output(True)
 
 # %% [markdown]
 # <a id="main-1"></a>
@@ -136,7 +138,6 @@ type_dir_ol = ol_data.get_ol_type_directedness()
 
 colored_region, colored_main_groups, colored_sign, colored_seed = load_colors()
 
-# Plots producing Main Fig. 1 panels
 plot.plot_flow_by_main_groups(ol_flow, conn_ol, type_dir_ol, flow_ol, colored_main_groups)  # 2b_left hit_hist, 2c_1, 2d_1
 
 # Connection-level ff/la/fb breakdown for Fig 2d_1
@@ -197,11 +198,11 @@ in_instances = list(ol_meta[ol_meta.main_groups=='visual input'].instance.unique
 
 colored_region, colored_main_groups, colored_sign, colored_seed = load_colors()
 
-# Clustering / pathway plots; produces 2d, 2e top, 2e bottom, 2g, 2h, 2i, 2j (+ SI 4a, 4b, 4c, 4e)
+# Clustering / pathway plots; 
 Z, thre, dendr = plot.plot_clusters_dendrograms(feat, frac_thre=FRAC)
 plot.plot_clusters_correlation_matrix(feat, dendr, cluster_num)
 plot.plot_clusters_example_features(feat, in_instances, [s+'_R' for s in plot._CLUSTER_TYPES], colored_seed)
-# Cluster assignments for main_2_d example types
+# Cluster assignments for example types
 _ex_types_2d = [s + '_R' for s in plot._CLUSTER_TYPES]
 _ex_cls_2d = clusters[clusters['instance'].isin(_ex_types_2d)][['instance', 'cluster']].sort_values('cluster')
 print('main_2_d cluster assignments:')
@@ -216,7 +217,7 @@ plot.plot_clusters_pathway_connectivity(pathways, n_clu, font_size=27)
 plot.plot_clusters_sankey(sankey, colored_main_groups, colored_seed, colored_region)
 plot.plot_clusters_graph(type_part, ol_meta, colored_main_groups, colored_sign, colored_seed)
 
-# pathway examples (2c right) and participation (2f right)
+# pathway examples and participation 
 type_to_sign  = dict(zip(ol_meta.cell_type, ol_meta.sign))
 sign_to_color = colored_sign['color'].to_dict()
 type_to_mg    = dict(zip(ol_meta.cell_type, colored_main_groups.loc[ol_meta.main_groups, 'color']))
@@ -252,7 +253,7 @@ for inst in core_data.load_participation_example_types():
         print(f'{inst} participation fractions to {len(_cc)} clusters (sum={_fr.sum():.3f}):')
         print(_fr.to_string(float_format=lambda x: f'{x:.4f}'))
 
-# OL polarity bars (Main 2b)
+# OL polarity bars
 cmp_vpn   = cmp_ol[cmp_ol['main_groups'] == 'VPN'].reset_index(drop=True)
 cmp_other = cmp_ol[cmp_ol['main_groups'] != 'VPN'].reset_index(drop=True)
 _w_vpn = int(max(400, 35 * len(cmp_vpn) + 150) * 0.9 * 0.95)
@@ -260,7 +261,7 @@ plot.plot_polarity_stacked_bars(cmp_vpn,   colored_seed, filename_stem='polarity
 _w_other = int(max(400, 35 * len(cmp_other) + 150) * 0.9 * 0.8)
 plot.plot_polarity_stacked_bars(cmp_other, colored_seed, filename_stem='polarity_predictions_other', width=_w_other)
 
-# Mismatched cell types per panel (Fig 2b_1 = other, Fig 2b_2 = vpn)
+# Mismatched cell types per panel
 _miss_other = cmp_other[~cmp_other.match][['instance', 'Contrast selectivity', 'predicted']]
 _miss_vpn   = cmp_vpn  [~cmp_vpn.match  ][['instance', 'Contrast selectivity', 'predicted']]
 print(f'Fig 2b_1 (other OL): {cmp_other.match.mean():.1%} match ({len(cmp_other)} types); {len(_miss_other)} mismatches:')
@@ -275,7 +276,7 @@ pf.distribute('main_3')
 _tables_dir = pf.RESULTS / 'tables'
 _tables_dir.mkdir(parents=True, exist_ok=True)
 _vic_ol_type = vic.get_ol_type_vic()
-_type_ol_rf  = ol_rf.get_rf_type_ol()
+_raw_ol_rf   = ol_rf.get_rf_raw_ol()
 # per-instance dimorphism: per-neuron property, constant within nearly every
 # instance; for the few that disagree take the mode (ties -> alphabetical).
 _dimorph = (
@@ -295,8 +296,10 @@ _ol_csv = _ol_csv.merge(
 )
 _ol_csv = _ol_csv.merge(_vic_ol_type, on='instance', how='left')
 _ol_csv = _ol_csv.merge(clusters[['instance', 'cluster']], on='instance', how='left')
+# ellipse_size/r2 are per-neuron medians (same aggregation as hull_size below
+# and as the gallery pages), not the single type-level fit from get_rf_type_ol
 _ol_csv = _ol_csv.merge(
-    _type_ol_rf.groupby('instance')[['size', 'r2']].median().reset_index(),
+    _raw_ol_rf.groupby('instance')[['size', 'r2']].median().reset_index(),
     on='instance', how='left',
 )
 _ol_csv = _ol_csv.merge(
@@ -344,10 +347,10 @@ cluster_names = [f'c{i}' for i in range(1, n_clu + 1)]
 in_instances  = ['L1_R', 'L2_R', 'L3_R', 'R7_R', 'R8_R']
 EXAMPLE_BID = 30134
 
-# Main 4a: example RF positions/fits (3a_1..3a_4 from plot_rf_example; 3a_5 = LC6_R ellipses)
+# Main 4a: example RF positions/fits 
 plot.plot_rf_example(ol_meta, stepsn, raw, EXAMPLE_BID, in_instances)
 plot.plot_rf_example_pos_par(ol_meta, stepsn, raw, EXAMPLE_BID, in_instances)
-# Main 4a_5 (LC6_R_rf_pos_par.pdf â€” fitted ellipses across all LC6 neurons) + Main 3b (examples_rf_*)
+# Main 4a_5 
 plot.plot_rf_positions_across_neurons(raw, 'LC6_R', example_bid=EXAMPLE_BID)
 # Main 4c: direct-input RFs for LC6_R
 roi_counts = pd.read_pickle(
@@ -414,7 +417,7 @@ _tbar_roi_keep = [r for r in plot._CB_ROI_ORDER if r in tbar_counts.columns]
 _tbar_total_all = tbar_counts.values.sum()
 _tbar_total_shown = tbar_counts[_tbar_roi_keep].values.sum()
 _tbar_frac_shown = _tbar_total_shown / _tbar_total_all if _tbar_total_all > 0 else 0.0
-print(f"Main 4g top displayed connection fraction: {_tbar_frac_shown:.3f} ({_tbar_total_shown:,.0f}/{_tbar_total_all:,.0f})")
+print(f"Main 5g top displayed connection fraction: {_tbar_frac_shown:.3f} ({_tbar_total_shown:,.0f}/{_tbar_total_all:,.0f})")
 type_part_cb_out = cb_data.get_ol_in_cb_type_participation(side_char='r', cb_frac_thre=FRAC_CB)
 ol_clu       = ol_data.get_ol_clusters(side_char='r', frac_thre=FRAC_OL)
 _meta        = core_data.get_meta()
@@ -435,7 +438,7 @@ print(f"VPN above VIC threshold ({VIC_THRE:.0e}): {_vpn_above_raw['bodyId'].nuni
 print(f"CB  above VIC threshold ({VIC_THRE:.0e}): {_cb_above_raw['bodyId'].nunique():,} neurons, {_cb_above_type['instance'].nunique():,} cell types")
 
 # Visual-sensitivity labels (TableS2 'CBN visual sensitivity' tab): 'Y...' =
-# visually sensitive (highlighted in 4a), 'N...' = not visually sensitive (used
+# visually sensitive (highlighted in 5a), 'N...' = not visually sensitive (used
 # only for the VIC-threshold mismatch check below). Names with '?' are skipped;
 # '*' is a prefix wildcard (e.g. ER3* -> ER3a..ER3w).
 _lit_df = pd.read_excel(
@@ -481,8 +484,8 @@ _mm_fn = sorted(((i, _vic_by_inst[i]) for i in _light_highlight if _vic_by_inst[
 print(f"Mismatch VIC > {VIC_THRE:.0e} but labeled 'N': {[f'{i} ({v:.1e})' for i, v in _mm_fp]}")
 print(f"Mismatch VIC < {VIC_THRE:.0e} but labeled 'Y': {[f'{i} ({v:.1e})' for i, v in _mm_fn]}")
 
-# Main 4a: VIC scatter / layer histogram / cumsum
-# Main 4_a_1/2/3: VPNs colored by VPN blue (main_groups), CB stays dark gray (region).
+# VIC scatter / layer histogram / cumsum
+# VPNs colored by VPN blue (main_groups), CB stays dark gray (region).
 _vic_colors = colored_region.copy()
 _vic_colors.loc['right OL', 'color'] = colored_main_groups.loc['VPN', 'color']
 plot.plot_vic_vs_layer_scatter(vic_type_cb, _vic_colors,
@@ -492,25 +495,25 @@ plot.plot_vic_layer_histogram(vic_type_cb, _vic_colors)
 plot.plot_vic_cumsum(vic_type_cb, _vic_colors)
 # Main 4c, 4d top: in-out examples + pathways for CB clusters
 plot.plot_cb_clusters_example_features(feat_r, in_instances, cb_example_types, colored_seed)
-# Cluster assignments for main_4_c example types
-_ex_cls_4c = cl_r[cl_r['instance'].isin(cb_example_types)][['instance', 'cluster']].sort_values('cluster')
-print('main_4_c cluster assignments:')
-print(_ex_cls_4c.to_string(index=False))
+# Cluster assignments for example types
+_ex_cls_5c = cl_r[cl_r['instance'].isin(cb_example_types)][['instance', 'cluster']].sort_values('cluster')
+print('main_5_c cluster assignments:')
+print(_ex_cls_5c.to_string(index=False))
 print('Largest cell type per CB cluster (by neuron count):')
-_top_4c = cl_r.loc[cl_r.groupby('cluster')['count'].idxmax()][['cluster', 'instance', 'count']].sort_values('cluster')
-print(_top_4c.to_string(index=False))
+_top_5c = cl_r.loc[cl_r.groupby('cluster')['count'].idxmax()][['cluster', 'instance', 'count']].sort_values('cluster')
+print(_top_5c.to_string(index=False))
 plot.plot_cb_clusters_pathway_features(feat_r, in_instances, cl_r, cluster_num, colored_seed)
-# Main 4d bottom + SI 5c: CB dendrograms
+# Main 5d bottom + SI: CB dendrograms
 plot.plot_clusters_dendrograms(feat_r, frac_thre=FRAC_CB, side_str='_cb', save_dir=config.FIG_DIR / 'CB_pathways')
-# Main 4e: CB cluster vs layer scatter
+# Main 5e: CB cluster vs layer scatter
 plot.plot_cb_clusters_scatter(cl_r, layer_lr, colored_region, highlight=cb_example_types)
-# Main 4f: CB cluster graph
+# Main 5f: CB cluster graph
 _fig4f_types = ["aMe4", "LPT111", "VS", "aMe12", "LC4", "LC6", "LPLC2", "T4a", "Tm5a"]
 plot.plot_cb_clusters_graph(type_part_cb_out, ol_clu, colored_region, ol_highlight=_fig4f_types)
-# Main 4g top: CB cluster x ROI heatmap
+# CB cluster x ROI heatmap
 plot.plot_cb_clusters_rois(tbar_counts)
 
-# pC1_2a / pC1_5b CB pathway examples (Main 4b right)
+# pC1_2a / pC1_5b CB pathway examples (Main 5b right)
 type_to_sign_full  = dict(zip(_meta.cell_type, _meta.sign))
 sign_to_color_full = colored_sign['color'].to_dict()
 _cb_color_df = pd.concat([
@@ -532,7 +535,7 @@ for inst, thre_cumsum, h_scale in [('pC1_2a_R', 0.6, 0.64), ('pC1_5b_R', 0.2, 0.
         save_path=examples_dir_cb / f'{config.FIG_DATASET}_{inst[:-2]}_pathway.pdf',
     )
 
-# Main 4d: CB polarity prediction bars
+# CB polarity prediction bars
 cmp_cb = polarity.get_cb_polarity_comparison()
 plot.plot_polarity_stacked_bars(
     cmp_cb, colored_seed, filename_stem='polarity_predictions_cb',
@@ -576,7 +579,7 @@ _cb_size = _cb_size.dropna(subset=['size_exp_deg', 'ahull_size_deg'])
 _cb_size = _cb_size[(_cb_size['size_exp_deg'] > 0) & (_cb_size['ahull_size_deg'] > 0)]
 _cb_size['region'] = 'CB'
 
-# Scatter mirroring Main 3e: log-log, CB region color, y=x +/- 2x guides.
+# Scatter mirroring: log-log, CB region color, y=x +/- 2x guides.
 _lo = 10 ** np.floor(np.log10(
     min(_cb_size['size_exp_deg'].min(), _cb_size['ahull_size_deg'].min())))
 _hi = 892 * 25
@@ -606,7 +609,6 @@ _fig_cb_ahull.show()
 plot._save(_fig_cb_ahull, config.FIG_DIR / 'exp_comparison',
            f'{config.FIG_DATASET}_exp_size_ahull_comp_cb.pdf', html=True)
 
-pf.distribute('main_5')
 
 
 # %%
@@ -614,7 +616,7 @@ pf.distribute('main_5')
 _tables_dir = pf.RESULTS / 'tables'
 _tables_dir.mkdir(parents=True, exist_ok=True)
 _type_dir_cb_4 = cb_data.get_cb_type_directedness()
-_rf_cb_type    = ol_rf.get_rf_type_cb()
+_rf_cb_raw     = ol_rf.get_rf_raw_cb()
 _vcbn_meta     = _meta[core_data.is_cb_neuron(_meta)][['instance', 'sign']].drop_duplicates('instance')
 _count_all     = core_data.get_flow()[['instance', 'count']].drop_duplicates('instance')
 # per-instance dimorphism: per-neuron property, constant within nearly every
@@ -637,8 +639,10 @@ _vcbn_csv = (
 _vic_vcbn = vic_type_cb[vic_type_cb['region'] == 'CB'][['instance', 'VIC']]
 _vcbn_csv = _vcbn_csv.merge(_vic_vcbn, on='instance', how='left')
 _vcbn_csv = _vcbn_csv.merge(cl_r[['instance', 'cluster']], on='instance', how='left')
+# ellipse_size/r2 are per-neuron medians (same aggregation as hull_size below
+# and as TableS1), not the single type-level fit from get_rf_type_cb
 _vcbn_csv = _vcbn_csv.merge(
-    _rf_cb_type.groupby('instance')[['size', 'r2']].median().reset_index(),
+    _rf_cb_raw.groupby('instance')[['size', 'r2']].median().reset_index(),
     on='instance', how='left',
 )
 _vcbn_csv = _vcbn_csv.merge(
@@ -665,14 +669,15 @@ print(f"Saved visual VCBNs CSV ({len(_vcbn_visual)} rows, VIC > 5e-4) -> results
 # projection panels (Main Fig. 5g/5h, 6a, 7c-right and SI Fig. 11/12).
 # Loaded once here, the first consumer; the Main Fig. 6/7 and SI Fig. 11/12
 # panels reuse `syn0`, `outlines_bkgd`, `plot_dir`, `roi_col` and `olc` from
-# this cell, so run this section before them. These panels are tagged AZ in
-# paper_figs.xlsx and placed into results/html_figures/ by hand (not via
-# pf.distribute); their PDFs go to results/quan_propagation/.
+# this cell, so run this section before them. Their PDFs go to
+# results/quan_propagation/ and are distributed by pf.distribute() like any
+# other panel; only the results/html_figures/ viewer entries are added by
+# hand, since these panels are PDF-only (no .html sidecar).
 #
-# Heavy run-once neuprint caches (built by setup_data/cb_cache): tbar
-# locations cache/data/tbar_vp_cb.pkl (~100 min, s4_tbar) + per-ROI tbar
+# Heavy run-once neuprint caches (built by setup_data): tbar
+# locations cache/data/tbar_vp_cb.pkl (~100 min, s5_tbar) + per-ROI tbar
 # counts results/quan_propagation/tbar_count_roi_cb.csv (~9 h); the effwt /
-# ahull / vp_cb tables come from s1_assemble_vpn_vcbn.
+# ahull / vp_cb tables come from s4_assemble_vpn_vcbn.
 # ==========================================================================
 from utils import olc_client
 from utils.config import DATA_DIR, FIG_DIR, PARAMS_DIR
@@ -681,7 +686,6 @@ from utils.projection_plots import plot_contribution_layers
 
 olc = olc_client.connect(verbose=False)
 
-result_dir = FIG_DIR / 'quan_propagation'
 plot_dir = FIG_DIR / 'quan_propagation'
 plot_dir.mkdir(parents=True, exist_ok=True)
 roi_col = load_roi_colors()
@@ -690,7 +694,7 @@ outline_1 = pd.read_csv(PARAMS_DIR / 'outline_cb_1.csv', index_col=False)
 outline_2 = pd.read_csv(PARAMS_DIR / 'outline_cb_2.csv', index_col=False)
 outlines_bkgd = [outline_1, outline_2]
 
-# tbar synapses (heavy query built by setup_data/cb_cache/s4_tbar)
+# tbar synapses (heavy query built by setup_data/s5_tbar)
 syn0 = pd.read_pickle(DATA_DIR / 'tbar_vp_cb.pkl')
 
 # --- Main Fig. 5g: VIC, all 5 input channels, right side ---
@@ -705,7 +709,7 @@ top_rois_ls, tbar_counts = plot_contribution_layers(
     fname=lambda gp, lo, hi: f'vic_ht_{gp}_{lo}_{hi}_{lr}.pdf')
 
 # top-N ROI accounting: fraction of tbars captured by the top-6 ROIs per layer
-tbar_count_roi_cb = pd.read_csv(result_dir / 'tbar_count_roi_cb.csv')
+tbar_count_roi_cb = pd.read_csv(DATA_DIR / 'tbar_count_roi_cb.csv')
 top_rois_df = pd.DataFrame(top_rois_ls).fillna(0)
 top_rois_perc_df = top_rois_df.copy()
 for roi in top_rois_df.columns:
@@ -759,21 +763,22 @@ for lo, hi in [(2, 3.5), (3.5, 4), (4, 5)]:
         curves, ascending=False, xlabel='DOB', xlim=(1, 0), drop_zero=True,
         save_dir=plot_dir, filename=f'dob_cum_top{N}_roi_{lo}_{hi}.pdf')
     perc_shown.append(sum(len(df_plot[df_plot.roi_base == rb]) for rb in hi_bases) / len(df_plot))
-perc_shown
+print('DOB f=', perc_shown)
+
+pf.distribute('main_5')
 
 # %% [markdown]
 # <a id="main-6"></a>
 # ## Main Fig. 6
 
 # %%
+# ~16 min
 coverage = cb_data.get_ol_roi_coverage(seed=0)
 sectors  = core_data.get_sector_map()
 
 # Loops over all ROIs producing {full, relative, symbol}.pdf each.
 # Main 6b left = ME(R)_{full,relative,symbol}; Main 6b right = symbol files of every other ROI.
 plot.plot_ol_roi_coverage_per_roi(coverage, sectors)
-
-pf.distribute('main_6')
 
 
 # %%
@@ -822,6 +827,8 @@ for gp, edges in {'VPN': [1, 5], 'nonOL': [2, 3.5, 4, 5]}.items():
             save_dir=plot_dir, filename=f'res_cum_top{N}_roi_{lo}_{hi}.pdf')
 top_rois_df = pd.DataFrame(top_rois_ls).fillna(0)
 top_rois_df.sum(axis=1) / tbar_counts
+
+pf.distribute('main_6')
 
 # %% [markdown]
 # <a id="main-7"></a>
@@ -927,8 +934,6 @@ out = DIM_DIR / f"{config.DATASET}_dimorphic_neurons_paper_panel.pdf"
 fig.savefig(out, bbox_inches="tight")
 plt.show()
 
-pf.distribute('main_7')
-
 
 # %%
 # --- Main Fig. 7b companion: propagated ARF examples ---
@@ -976,8 +981,11 @@ ol_meta   = core_data.get_ol_meta()
 ol_stepsn = ol_data.get_ol_stepsn_sum()
 raw_ol    = ol_rf.get_rf_raw_ol()
 
-# Full-brain propagation (CB types). The matrix (~10 GB) loads lazily on the
-# first CB plot, so OL-only (re)generations never pay for it.
+# Full-brain propagation (CB types). The matrix (~9 GiB resident) loads lazily
+# on the first CB plot, so OL-only (re)generations never pay for it. Shared
+# (not reloaded) by SI Fig. 7f and SI Fig. 9, which need this same full-brain
+# matrix -- see release_full_stepsn(), called at the end of SI Fig. 9 once
+# nothing later needs it.
 full_meta = core_data.get_meta()
 raw_cb    = ol_rf.get_rf_raw_cb()
 _full_stepsn = [None]
@@ -985,6 +993,8 @@ def load_full_stepsn():
     if _full_stepsn[0] is None:
         _full_stepsn[0] = sp.load_npz(config.DATA_DIR / f'{config.DATASET}_{config.SIDE_CHAR}_lat_flow_sum.npz')
     return _full_stepsn[0]
+def release_full_stepsn():
+    _full_stepsn[0] = None
 
 # Visual-input instances that seed the propagated RF (same set used for the fits).
 vis_in = _default_visual_input_instances(config.SIDE_CHAR)
@@ -1013,7 +1023,7 @@ for _, r in reps.iterrows():
     if 'OL' in str(region):
         meta, stepsn = ol_meta, ol_stepsn
     else:
-        meta, stepsn = full_meta, load_full_stepsn()   # lazy 10 GB load, CB only
+        meta, stepsn = full_meta, load_full_stepsn()   # lazy ~9 GiB load, CB only, shared/freed (see above)
     fig, bid = plot.plot_propagated_arf_example(
         meta, stepsn, raw, ct, vis_in, bodyId=bid, save_dir=arf_dir,
     )
@@ -1043,6 +1053,8 @@ plot_contribution_layers(
     syn, 'vision', plot_dir=plot_dir, outlines=outlines_bkgd,
     gp_layers=None, vmax='p99',
     fname=lambda gp, lo, hi: f'sexdim_vic_ht_{lr}.pdf')
+
+pf.distribute('main_7')
 
 # %% [markdown]
 # <a id="si-1"></a>
@@ -1126,8 +1138,6 @@ pf.distribute('si_2')
 # %% [markdown]
 # <a id="si-3"></a>
 # ## SI Fig. 3
-#
-# Polarity-mismatch pathway diagrams (3a) + signed polarity predictions (3b).
 
 # %%
 # --- Polarity (signed): excitation − inhibition ---
@@ -1607,8 +1617,6 @@ pf.distribute('si_6')
 # %% [markdown]
 # <a id="si-7"></a>
 # ## SI Fig. 7
-#
-# RF/experimental comparisons: 7a prop-vs-direct, 7b exp_sx/sy, 7c aspect ratio, 7d ellipse-CC, 7e r2-vs-size (copied from Main Fig. 4's rf_fits output), 7f Nod5_R example fit.
 
 # %%
 # SI Fig. 7 - RF / experimental size comparisons.
@@ -1748,7 +1756,9 @@ from utils.ol_rf import _compute_rf_params, _clean_rf_params, _default_visual_in
 
 _BID_7F = 12328  # Nod5_R
 _meta_7f = core_data.get_meta()
-_stepsn_7f = sp.load_npz(config.DATA_DIR / f'{config.DATASET}_{config.SIDE_CHAR}_lat_flow_sum.npz')
+# shared with Main Fig. 7 / SI Fig. 9 (load_full_stepsn(), same underlying
+# matrix) -- requires the Main Fig. 7 cell above to have run in this session.
+_stepsn_7f = load_full_stepsn()
 _in_7f = _default_visual_input_instances(config.SIDE_CHAR)
 _params_7f = _clean_rf_params(_compute_rf_params(_meta_7f, _stepsn_7f, _in_7f, ['Nod5_R']))
 plot.plot_rf_estimated_overlay(
@@ -1784,7 +1794,7 @@ pf.distribute('si_7')
 # <a id="si-8"></a>
 # ## SI Fig. 8
 #
-# CB clustering. (Also produces SI 10b/10c/10d, distributed in SI 10.)
+# (Also produces SI 10b/10c/10d, distributed in SI 10.)
 
 # %%
 FRAC_CB = 0.17
@@ -1844,30 +1854,26 @@ pf.distribute('si_8')
 # <a id="si-9"></a>
 # ## SI Fig. 9
 #
-# Ring-neuron pathways + propagated / combined ARFs.
 
 # %%
-# --- Ring-neuron analysis ---
-# Analyses of ellipsoid-body ring neurons (ER*). Consumes cached artefacts
-# from `data/cache/`; one cell per analysis.
-
 import importlib
 
 import pandas as pd
 import scipy.sparse as sp
 
 from utils import config
-from utils.config import load_colors
+from utils.palettes import load_colors
 from utils import cb_data, core_data
 from utils import plotting as plot
 plot = importlib.reload(plot)
 
 plot.set_html_output(False)
 
-# full-brain propagation matrix (~6 GB resident).
-full_stepsn = sp.load_npz(
-    config.DATA_DIR / f'{config.DATASET}_{config.SIDE_CHAR}_lat_flow_sum.npz'
-)
+# full-brain propagation matrix (~9 GiB resident) -- shared with Main Fig. 7 /
+# SI Fig. 7f via load_full_stepsn(), not reloaded here (requires the Main
+# Fig. 7 cell to have run in this session). Freed at the end of this section
+# (see release_full_stepsn() below) since nothing after SI Fig. 9 needs it.
+full_stepsn = load_full_stepsn()
 
 # --- 1. Pathway diagrams (like Main Fig. 5b) ---
 # Effective-weight pathway diagrams from OL visual inputs to ellipsoid-body
@@ -2095,13 +2101,19 @@ for vcbn, vpn_types in VPN_TYPES.items():
 
 pf.distribute('si_9')
 
-plot.set_html_output(True)  # ring section disabled HTML sidecars; re-enable for SI 10/13/14
+# Nothing after SI Fig. 9 needs the full-brain propagation matrix -- release it.
+for _name in ('full_stepsn', '_stepsn_7f'):
+    globals().pop(_name, None)
+release_full_stepsn()
+import gc
+gc.collect()
+
+plot.set_html_output(True)  # section disabled HTML sidecars; re-enable for SI 10/13/14
 
 # %% [markdown]
 # <a id="si-10"></a>
 # ## SI Fig. 10
 #
-# Effective # visual inputs per cluster with the VPN-vs-VCBN stat test (10a) + VCN input pie (10e). SI 10b/10c/10d are produced in SI 8 and picked up by `distribute('si_10')`.
 
 # %%
 # SI 10a: effective number of visual inputs per instance (VPN + VCBN) + the
@@ -2218,11 +2230,8 @@ pf.distribute('si_10')
 # <a id="si-11"></a>
 # ## SI Fig. 11 & 12 — VIC projections
 #
-# These SI panels reuse the shared VIC-projection setup (`syn0`,
-# `outlines_bkgd`, `plot_dir`, `olc`) loaded in the Main Fig. 5 section, so they
-# run after that section. (The former "Visual-input contribution / resolution /
-# coverage" panels that once lived here were merged into the Main Fig. 5
-# (5g/5h), 6 (6a) and 7 (7c-right) sections.)
+# These SI panels reuse the shared VIC-projection setup loaded in the Main Fig. 5 section, so they
+# need to be run after that section.
 
 # %%
 # --- VIC, all 5 channels, left side — SI Fig. 11a ---
@@ -2272,8 +2281,6 @@ pf.distribute('si_12')
 # %% [markdown]
 # <a id="si-13"></a>
 # ## SI Fig. 13
-#
-# CB receptive fields. (Inline comments in this cell note author-flagged xlsx drift on the 13a source panel.)
 
 # %%
 FRAC_CB = 0.17
@@ -2352,7 +2359,8 @@ import pandas as pd
 
 from utils import core_data, polarity
 from utils import plotting as plot
-from utils.config import DATA_DIR, PARAMS_DIR, FIG_DIR, load_colors
+from utils.config import DATA_DIR, PARAMS_DIR, FIG_DIR
+from utils.palettes import load_colors
 from utils.polarity import _build_polarity_labels, _side_cell_types
 
 plot.set_html_output(True)              # write HTML sidecars alongside the PDFs
@@ -2526,6 +2534,11 @@ plot.plot_polarity_stacked_bars(
 # - VIC: `vic.get_ol_cb_vic_raw(dataset, side_char='l')` (per-body summed
 # effective input weight from the left visual-input seeds via `_l_lat_flow_sum`).
 
+# Note: In male CNS vs. FlyWire, 3 CB cell types match by exact name but disagree
+# on dimorphism status: CRE062 (dimorphic vs. isomorphic), and DNp68/SMP276 
+# (dimorphic vs. "potentially" dimorphic — borderline calls). This results in 
+# different counts of dimorphic neurons in the two datasets, but the visual fraction is still comparable.
+
 from pathlib import Path
 
 import numpy as np
@@ -2555,21 +2568,14 @@ CAT_BAR = {
 }
 
 # --- Region patch + meta (carries the new `dimorphism` column) ---
-# Idempotent: stash the TRUE original on the module so this shares the patch
-# with the polarity cell above instead of wrapping its wrapper (stacking
-# wrappers is what caused the RecursionError).
+# Reuses `_patched_lmg`, defined in the SI 14a/14b polarity cell above (this
+# cell must run after it — see the section markdown). Idempotent: stash the
+# TRUE original on the module so this shares the patch with the polarity cell
+# above instead of wrapping its wrapper (stacking wrappers is what caused the
+# RecursionError).
 
 if not hasattr(core_data, "_load_meta_groups_orig"):
     core_data._load_meta_groups_orig = core_data._load_meta_groups
-
-
-def _patched_lmg(dataset, data_dir):
-    meta = core_data._load_meta_groups_orig(dataset, data_dir)
-    opt = meta.superclass == "optic"
-    meta.loc[opt & (meta.side == "left"), "region"] = "left OL"
-    meta.loc[opt & (meta.side == "right"), "region"] = "right OL"
-    return meta
-
 
 core_data._load_meta_groups = _patched_lmg
 

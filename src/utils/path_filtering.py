@@ -46,34 +46,53 @@ def _reconstruct_paths_with_trace(
     * ``min_edge_weight``  — minimum edge weight along the path.
 
     Returns ``None`` if ``paths_df`` is empty or missing a required layer.
+
+    The chain-join runs on int64 node codes (labels factorized once up front,
+    decoded on the final frame only): hub-heavy instances can reconstruct to
+    millions of rows, and object-dtype trace columns plus the full-frame copy
+    that ``rename`` makes per layer were enough to exhaust memory.
     """
     if paths_df is None or paths_df.empty:
         return None
     max_layer = int(paths_df["layer"].max())
-    df = paths_df[["layer", "pre", "post", "weight"]].copy()
-    df["layer"] = df["layer"].astype(int)
-    layer_edges = {l: g for l, g in df.groupby("layer")}
+    layer = paths_df["layer"].astype(int).to_numpy()
+    codes, uniques = pd.factorize(
+        pd.concat([paths_df["pre"], paths_df["post"]], ignore_index=True)
+    )
+    uniques = np.asarray(uniques)
+    pre_c, post_c = codes[: len(paths_df)], codes[len(paths_df):]
+    weight = paths_df["weight"].to_numpy()
+    layer_edges = {
+        int(L): (pre_c[layer == L], post_c[layer == L], weight[layer == L])
+        for L in np.unique(layer)
+    }
     if 1 not in layer_edges:
         return None
 
-    cur = layer_edges[1][["pre", "post", "weight"]].rename(
-        columns={"pre": "n0", "post": "n1", "weight": "w1"}
-    ).copy()
+    p1, q1, w1 = layer_edges[1]
+    cur = pd.DataFrame({"n0": p1, "n1": q1, "w1": w1})
     cur["path_weight"] = cur["w1"]
     cur["min_edge_weight"] = cur["w1"]
 
     for L in range(2, max_layer + 1):
         if L not in layer_edges:
             return None
-        nxt = layer_edges[L][["pre", "post", "weight"]].rename(
-            columns={"weight": f"w{L}"}
+        pL, qL, wL = layer_edges[L]
+        # joining on the shared node column needs no post-merge rename/drop
+        nxt = pd.DataFrame({f"n{L-1}": pL, f"n{L}": qL, f"w{L}": wL})
+        cur = cur.merge(nxt, on=f"n{L-1}", how="inner")
+        wcol = cur[f"w{L}"].to_numpy()
+        cur["path_weight"] = cur["path_weight"].to_numpy() * wcol
+        cur["min_edge_weight"] = np.minimum(
+            cur["min_edge_weight"].to_numpy(), wcol
         )
-        cur = cur.merge(nxt, left_on=f"n{L-1}", right_on="pre", how="inner")
-        cur = cur.rename(columns={"post": f"n{L}"}).drop(columns=["pre"])
-        cur["path_weight"] = cur["path_weight"] * cur[f"w{L}"]
-        cur["min_edge_weight"] = np.minimum(cur["min_edge_weight"], cur[f"w{L}"])
 
-    return cur.reset_index(drop=True) if not cur.empty else None
+    if cur.empty:
+        return None
+    cur = cur.reset_index(drop=True)
+    for i in range(max_layer + 1):
+        cur[f"n{i}"] = uniques[cur[f"n{i}"].to_numpy()]
+    return cur
 
 
 def _trace_to_edges(trace: pd.DataFrame, max_layer: int) -> pd.DataFrame:

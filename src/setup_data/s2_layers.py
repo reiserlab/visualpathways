@@ -2,19 +2,20 @@
 # jupyter:
 #   jupytext:
 #     formats: ipynb,py:percent
+#     notebook_metadata_filter: -kernelspec
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.16.0
-#   kernelspec:
-#     display_name: olc2
-#     language: python
-#     name: olc2
 # ---
 
 # %% [markdown]
 # # Compute flow hitting times
+#
+# Works for any dataset. Defaults to the config dataset (malecns, right side);
+# to compute the **flywire** flow (left side), uncomment the override in the
+# "Dataset selection" cell below — same pattern as `s3_effconn`.
 #
 # Inputs:
 # - `{dataset}_meta.csv`
@@ -33,22 +34,35 @@ from dotenv import load_dotenv, find_dotenv
 
 PROJECT_ROOT = Path(find_dotenv()).parent
 sys.path.append(str(PROJECT_ROOT / 'src'))
-sys.path.append(str(PROJECT_ROOT / 'src' / 'setup_data' / 'lib'))
+sys.path.append(str(PROJECT_ROOT / 'src' / 'setup_data'))
 
 import pandas as pd
 import scipy.sparse as sp
 
-from utils.config import DATA_DIR, DATASET, HIT_THRE, MODEL_COMPARISON_DIR, N_FLOW, SIDE_CHAR
+from utils.config import (
+    DATA_DIR, DATASET, FLYWIRE_DATASET, FLYWIRE_SIDE_CHAR, HIT_THRE,
+    MODEL_COMPARISON_DIR, N_FLOW, SIDE_CHAR,
+)
 import flow as sd
 
 load_dotenv(PROJECT_ROOT / '.env')
-TAG = DATASET.split('_', 1)[-1]  # e.g. 'v1.0'
+
+
+# %% [markdown]
+# ## Dataset selection
+#
+# Defaults to the config dataset. Uncomment the override to compute flywire.
+
+# %%
+# Defaults to the config dataset (malecns, right). To compute the FlyWire flow
+# instead, uncomment the next line (tag + side come from config.py):
+# DATASET, SIDE_CHAR = FLYWIRE_DATASET, FLYWIRE_SIDE_CHAR
 print(f'dataset: {DATASET}; side: {SIDE_CHAR}; data: {DATA_DIR}')
 
 
 # %%
-meta = pd.read_csv(DATA_DIR / f'malecns_{TAG}_meta.csv')
-inprop = sp.load_npz(DATA_DIR / f'malecns_{TAG}_inprop.npz')
+meta = pd.read_csv(DATA_DIR / f'{DATASET}_meta.csv')
+inprop = sp.load_npz(DATA_DIR / f'{DATASET}_inprop.npz')
 print(f'meta rows: {len(meta):,}; inprop shape: {inprop.shape} nnz={inprop.nnz:,}')
 
 
@@ -57,8 +71,10 @@ print(f'meta rows: {len(meta):,}; inprop shape: {inprop.shape} nnz={inprop.nnz:,
 
 # %%
 idx_to_instance = dict(zip(meta.idx, meta.instance))
+# (FlyWire: L_FLOW_SEEDS matches its left instances as-is; the seedless
+# R7d_L/R8d_L are silently skipped by find_instance_flow.)
 seed_groups = sd.R_FLOW_SEEDS if SIDE_CHAR == 'r' else sd.L_FLOW_SEEDS
-save_prefix = f'malecns_{TAG}_{SIDE_CHAR}_flow_'
+save_prefix = f'{DATASET}_{SIDE_CHAR}_flow_'
 
 flow_df = sd.fetch_instance_flow(
     inprop, idx_to_instance, seed_groups, DATA_DIR, save_prefix,
@@ -110,7 +126,7 @@ print(f'wrote {DATA_DIR}/{save_prefix}{N_FLOW}step_{HIT_THRE}thre_hit.csv'
 # from scipy.sparse import diags
 #
 # MODEL_COMPARISON_DIR.mkdir(parents=True, exist_ok=True)
-# _prop = sp.load_npz(DATA_DIR / f'malecns_{TAG}_prop.npz').tocsc().astype(np.float32)
+# _prop = sp.load_npz(DATA_DIR / f'{DATASET}_prop.npz').tocsc().astype(np.float32)
 # _prop.data[_prop.data <= 2] = 0
 # _prop.eliminate_zeros()
 # _colsum = np.asarray(_prop.sum(axis=0)).ravel()
@@ -118,7 +134,7 @@ print(f'wrote {DATA_DIR}/{save_prefix}{N_FLOW}step_{HIT_THRE}thre_hit.csv'
 # _inv[_colsum > 0] = 1.0 / _colsum[_colsum > 0]
 # inprop_2syn = (_prop @ diags(_inv)).tocsc().astype(np.float32)
 #
-# _tmp = f'malecns_{TAG}_{SIDE_CHAR}_flow2syn_'
+# _tmp = f'{DATASET}_{SIDE_CHAR}_flow2syn_'
 # sd.fetch_instance_flow(inprop_2syn, idx_to_instance, seed_groups, MODEL_COMPARISON_DIR, _tmp,
 #                        steps=N_FLOW, thre=HIT_THRE)
 # (MODEL_COMPARISON_DIR / f'{_tmp}{N_FLOW}step_{HIT_THRE}thre_hit.csv').replace(
@@ -158,7 +174,7 @@ print(f'wrote {DATA_DIR}/{save_prefix}{N_FLOW}step_{HIT_THRE}thre_hit.csv'
 #     s for s in seed_groups if s not in (f'L1_{_S}', f'L2_{_S}', f'L3_{_S}')
 # ]
 #
-# _tmp = f'malecns_{TAG}_{SIDE_CHAR}_flowr16_'
+# _tmp = f'{DATASET}_{SIDE_CHAR}_flowr16_'
 # sd.fetch_instance_flow(inprop_r16, idx_to_instance_r16, seed_groups_r16, MODEL_COMPARISON_DIR, _tmp,
 #                        steps=N_FLOW, thre=HIT_THRE)
 # (MODEL_COMPARISON_DIR / f'{_tmp}{N_FLOW}step_{HIT_THRE}thre_hit.csv').replace(
