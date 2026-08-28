@@ -155,8 +155,6 @@ which writes them into `results/dimorphism/` where the manifest expects them.
 The exploratory outputs of the retired `dimorphism_analysis` notebook
 (`results/neurons_dimorphism.csv`, `results/tables/{DATASET}_dimorphism.csv`) are gone and
 are not regenerated — only the two paper panels above survive.
-[Issue #42](https://github.com/reiserlab/ol-connectome-analysis/issues/42) tracked the
-module's removal and can be closed on these grounds.
 
 ## Key Technologies & Dependencies
 
@@ -298,7 +296,7 @@ Run the [`setup_data/`](src/setup_data/) numbered stages `s1`→`s5` in order (s
 
 - **Documentation:** [`docs/`](docs/) — [`run_order.md`](docs/run_order.md) (sequencing).
 - **Original codebase:** some code carried over from [male-drosophila-visual-system-connectome-code](https://github.com/reiserlab/male-drosophila-visual-system-connectome-code)
-- **Interactive figures:** [GitHub Pages figure browser](https://reiserlab.github.io/ol-connectome-analysis/results/html_figures/)
+- **Interactive figures:** [GitHub Pages figure browser](https://reiserlab.github.io/visualpathways/results/html_figures/)
 - **NeuPrint API:** https://neuprint-cns.janelia.org/ · **Janelia FlyEM:** https://www.janelia.org/project-team/flyem · **Reiser Lab:** https://www.janelia.org/lab/reiser-lab/
 
 ---

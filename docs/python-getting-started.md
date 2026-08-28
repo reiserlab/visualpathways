@@ -123,7 +123,7 @@ One of our libraries requries a C++ compiler. While MacOS and Linux have these p
 
 ## Dependency management
 
-From this step forward you will need to have the code from the [ol-connectome-analysis](https://github.com/reiserlab/ol-connectome-analysis) github project. So please download the code to a directory, which I will call _project root_ (or `$PROJECT_ROOT`) from now on.
+From this step forward you will need to have the code from the [visualpathways](https://github.com/reiserlab/visualpathways) github project. So please download the code to a directory, which I will call _project root_ (or `$PROJECT_ROOT`) from now on.
 
 Open a terminal and go to the _project root_. The project's dependencies are defined in `pyproject.toml`. To install everything, first make sure that you have the virtual environment activated, for example by executing `workon <NAME>` (or `conda activate <NAME>`). If you are not sure, it doesn't hurt to run the command again.
 
@@ -177,4 +177,4 @@ The connection is done through the [JupyText](https://jupytext.readthedocs.io) s
 
 ## Final words
 
-If any of the above failed and you can't fix it, then please open an issue on the [project's GitHub page](https://github.com/reiserlab/ol-connectome-analysis/issues) or get in contact with the Reiser Lab.
+If any of the above failed and you can't fix it, then please open an issue on the [project's GitHub page](https://github.com/reiserlab/visualpathways/issues) or get in contact with the Reiser Lab.

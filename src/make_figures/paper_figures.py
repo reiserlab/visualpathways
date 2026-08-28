@@ -2641,6 +2641,18 @@ pf.distribute('si_14')
 pf.parity_check(exclude_folders=['si_5', 'si_6'], expected_missing=['si_12/si_12_25.pdf', 'si_12/si_12_26.pdf'])
 
 
+# %% [markdown]
+# <a id="rebuild-viewer-index"></a>
+# ## Rebuild viewer index
+
+# %%
+# Regenerate results/html_figures/index.html from the distributed .html sidecars
+# so the interactive-figure browser (linked from README) matches the current
+# panel set. build_index() only globs html_figures/, so it is independent of the
+# topic folders drain_topics() removes below.
+pf.build_index()
+
+
 # %%
 # Topic folders are now redundant: every panel was copied into its
 # main_<N> / si_<N> folder (+ html_figures/). Drain them so the deliverable
