@@ -62,6 +62,8 @@ _INDEX_TEMPLATE = """<!DOCTYPE html>
     border: 1px solid #bbb; border-radius: 4px;
   }
   #count { font-size: 12px; color: #777; margin-top: 6px; }
+  #lab { font-size: 12px; margin-top: 6px; }
+  #lab a { color: #1a5; }
   ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
   li { display: flex; align-items: center; border-bottom: 1px solid #f0f0f0; }
   li.hidden { display: none; }
@@ -91,6 +93,7 @@ _INDEX_TEMPLATE = """<!DOCTYPE html>
     <input id="search" type="text" placeholder="Search instance…"
            autocomplete="off" autofocus>
     <div id="count"></div>
+    <div id="lab"><a href="https://reiserlab.org/">Reiser Lab</a></div>
   </div>
   <ul id="list"></ul>
 </nav>
