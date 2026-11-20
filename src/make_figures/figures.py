@@ -348,6 +348,20 @@ _INDEX_TEMPLATE = r"""<!doctype html>
       white-space: nowrap;
     }
 
+    .count a {
+      display: inline;
+      min-height: 0;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      text-decoration: underline;
+    }
+
+    .count a:hover,
+    .count a:focus {
+      background: none;
+    }
+
     .groups {
       display: grid;
       gap: 16px;
@@ -512,7 +526,7 @@ _INDEX_TEMPLATE = r"""<!doctype html>
   <main>
     <header>
       <h1>Interactive HTML Figures</h1>
-      <div class="count" id="panel-count"></div>
+      <div class="count"><span id="panel-count"></span> · <a href="https://reiserlab.org/">Reiser Lab</a></div>
     </header>
 
     <div class="layout">
